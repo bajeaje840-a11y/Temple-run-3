@@ -807,18 +807,27 @@ export class AdventurerCharacter {
       this.leftAnkle.rotation.x = THREE.MathUtils.clamp(-s * 0.38 + c * 0.18, -0.45, 0.45);
       this.rightAnkle.rotation.x = THREE.MathUtils.clamp(s * 0.38 - c * 0.18, -0.45, 0.45);
 
-      // Opposite arm swing with dynamic elbow angle
+      // Opposite arm swing with natural forward elbow flexion and shoulder sweep
+      const armSwing = 0.64 + speedNorm * 0.16;
+      const shoulderNeutral = 0.16 + speedNorm * 0.06;
+      const rightSwingX = shoulderNeutral + s * armSwing;
+      const rightElbowX = 1.24 + s * 0.22 + speedNorm * 0.08;
       if (state.collectTimer > 0) {
-        this.rightShoulder.rotation.set(-2.05, 0, 0.16);
-        this.rightElbow.rotation.x = -0.35;
-        this.rightWrist.rotation.x = -0.1;
+        const reach = Math.sin(Math.min(1, state.collectTimer / 0.25) * Math.PI);
+        this.rightShoulder.rotation.set(
+          THREE.MathUtils.lerp(rightSwingX, 1.38, reach * 0.65),
+          THREE.MathUtils.lerp(s * 0.14, 0.12, reach * 0.65),
+          0.16 - s * 0.03
+        );
+        this.rightElbow.rotation.x = THREE.MathUtils.lerp(rightElbowX, 0.72, reach * 0.65);
+        this.rightWrist.rotation.x = 0.08;
       } else {
-        this.rightShoulder.rotation.set(s * 0.88, -s * 0.08, 0.14);
-        this.rightElbow.rotation.x = -1.18 - Math.max(0, -s) * 0.35;
+        this.rightShoulder.rotation.set(rightSwingX, s * 0.14, 0.16 - s * 0.03);
+        this.rightElbow.rotation.x = rightElbowX;
         this.rightWrist.rotation.x = 0.08;
       }
-      this.leftShoulder.rotation.set(-s * 0.88, s * 0.08, -0.14);
-      this.leftElbow.rotation.x = -1.18 - Math.max(0, s) * 0.35;
+      this.leftShoulder.rotation.set(shoulderNeutral - s * armSwing, s * 0.14, -0.16 - s * 0.03);
+      this.leftElbow.rotation.x = 1.24 - s * 0.22 + speedNorm * 0.08;
       this.leftWrist.rotation.x = 0.08;
     }
 
