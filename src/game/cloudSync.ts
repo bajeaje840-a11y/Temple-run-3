@@ -142,10 +142,15 @@ export async function upsertLeaderboardEntry(user: User, save: SaveData): Promis
   const path = `leaderboard/${user.uid}`;
   try {
     const ref = doc(db, 'leaderboard', user.uid);
-    const existingSnap = await getDoc(ref);
-    const existingData = existingSnap.exists()
-      ? (existingSnap.data() as Partial<LeaderboardEntry>)
-      : null;
+    let existingData: Partial<LeaderboardEntry> | null = null;
+    try {
+      const existingSnap = await getDoc(ref);
+      if (existingSnap.exists()) {
+        existingData = existingSnap.data() as Partial<LeaderboardEntry>;
+      }
+    } catch {
+      existingData = null;
+    }
     const effectiveSave: SaveData = existingData
       ? {
           ...save,

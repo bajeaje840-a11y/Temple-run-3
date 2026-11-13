@@ -376,3 +376,64 @@ test('cloud and local save merge preserves highest progress, unions unlocks, and
   assert.equal(sanitizeDisplayName('   '), 'Temple Explorer');
   assert.equal(sanitizeDisplayName('A'.repeat(64)).length, 48);
 });
+
+import {
+  CloudSyncCoordinator,
+  formatCloudErrorMessage,
+  isTransientCloudError,
+} from './syncCoordinator';
+
+test('CloudSyncCoordinator coalesces rapid saves, retries transient errors once, and isolates leaderboard errors', async () => {
+  const statuses: string[] = [];
+  let persistCalls = 0;
+  let lastSavedCoins = -1;
+  let failFirstAttempt = true;
+
+  const coord = new CloudSyncCoordinator({
+    debounceMs: 25,
+    retryDelayMs: 5,
+    persistSave: async (_user, save) => {
+      persistCalls++;
+      if (failFirstAttempt) {
+        failFirstAttempt = false;
+        throw new Error('The service is currently unavailable.');
+      }
+      lastSavedCoins = save.coins;
+    },
+    upsertLeaderboard: async () => {
+      throw new Error(
+        JSON.stringify({
+          error: 'Missing or insufficient permissions.',
+          path: 'leaderboard/alice',
+        })
+      );
+    },
+    onStatus: (update) => {
+      statuses.push(update.syncStatus);
+    },
+  });
+
+  coord.setUser({uid: 'alice', emailVerified: true});
+  const base = createDefaultSaveData();
+
+  // Rapid debounced writes coalesce to the latest snapshot
+  const p1 = coord.scheduleSave({...base, coins: 200}, {immediate: false});
+  const p2 = coord.scheduleSave({...base, coins: 350}, {immediate: false});
+  const p3 = coord.scheduleSave({...base, coins: 500}, {immediate: true, updateLeaderboard: true});
+
+  await Promise.all([p1, p2, p3]);
+  assert.equal(persistCalls, 2); // 1 transient failure + 1 automatic retry
+  assert.equal(lastSavedCoins, 500);
+  assert.equal(statuses[statuses.length - 1], 'synced');
+  assert.equal(coord.isDirty(), false);
+
+  assert.equal(isTransientCloudError(new Error('network unavailable')), true);
+  assert.equal(isTransientCloudError(new Error('PERMISSION_DENIED')), false);
+  assert.ok(
+    formatCloudErrorMessage(
+      new Error(JSON.stringify({error: 'Missing or insufficient permissions.', path: 'saves/alice'}))
+    ).includes('permission')
+  );
+  coord.dispose();
+});
+

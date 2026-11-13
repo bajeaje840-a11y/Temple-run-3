@@ -1000,6 +1000,9 @@ export class TempleRunEngine {
     });
     if (stepped) {
       this.audio.playFootstep();
+      this.world.particles.emit(_playerWorldPos, 2, 0xcab89d, 1.15, 0.34, 0.65);
+    } else if (this.isSliding && Math.random() < dt * 16) {
+      this.world.particles.emit(_playerWorldPos, 1, 0xcab89d, 1.0, 0.32, 0.55);
     }
 
     this.updateAtmosphere(dt);

@@ -9,21 +9,13 @@ import {
   sanitizeDisplayName,
   upsertLeaderboardEntry,
 } from './game/cloudSync';
+import {CloudSyncCoordinator, formatCloudErrorMessage} from './game/syncCoordinator';
 import {ensureDailyMissions} from './game/dailyMissions';
 import {TempleRunEngine} from './game/engine';
 import {applyRunToSave, canAffordRevive, getReviveCost} from './game/rules';
 import {loadSaveData, persistSaveData} from './game/storage';
 import type {GameState, RunStats, SaveData} from './game/types';
 import {TempleUI, type CloudAccountState} from './ui/hud';
-
-function formatCloudErrorMessage(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
-  if (msg.includes('popup-closed-by-user')) return 'Sign-in cancelled.';
-  if (msg.includes('permission') || msg.includes('PERMISSION_DENIED')) {
-    return 'Permission error while syncing cloud data.';
-  }
-  return 'Could not reach Firebase right now.';
-}
 
 function bootstrap(): void {
   const mountEl = document.getElementById('game-canvas-mount');
@@ -60,22 +52,22 @@ function bootstrap(): void {
     ui.setCloudState(cloudState);
   };
 
-  const syncCloudProgress = async (updateLeaderboard: boolean) => {
-    const user = currentUser;
-    if (!user || !user.emailVerified) return;
-    updateCloudState({syncStatus: 'syncing', errorMessage: null});
-    try {
-      await persistCloudSave(user, saveData);
-      if (updateLeaderboard && saveData.highScore > 0) {
-        await upsertLeaderboardEntry(user, saveData);
-      }
-      updateCloudState({syncStatus: 'synced', errorMessage: null});
-    } catch (err) {
-      updateCloudState({
-        syncStatus: 'error',
-        errorMessage: formatCloudErrorMessage(err),
-      });
-    }
+  const syncCoordinator = new CloudSyncCoordinator({
+    persistSave: async (_user, save) => {
+      if (!currentUser) return;
+      await persistCloudSave(currentUser, save);
+    },
+    upsertLeaderboard: async (_user, save) => {
+      if (!currentUser) return;
+      await upsertLeaderboardEntry(currentUser, save);
+    },
+    onStatus: (update) => {
+      updateCloudState(update);
+    },
+  });
+
+  const syncCloudProgress = (updateLeaderboard: boolean, immediate = true) => {
+    return syncCoordinator.scheduleSave(saveData, {immediate, updateLeaderboard});
   };
 
   const refreshLeaderboard = async () => {
@@ -172,7 +164,7 @@ function bootstrap(): void {
         saveData.settings.muted
       );
       engine.syncSaveData(saveData);
-      void syncCloudProgress(false);
+      void syncCloudProgress(false, false);
     },
     onButtonClickSfx: () => {
       audio.playClick();
@@ -192,6 +184,10 @@ function bootstrap(): void {
     },
     onSignOutGoogle: () => {
       void signOutExplorer();
+    },
+    onRetryCloudSync: () => {
+      if (!currentUser) return;
+      void syncCloudProgress(true, true);
     },
     onRefreshLeaderboard: () => {
       void refreshLeaderboard();
@@ -264,6 +260,7 @@ function bootstrap(): void {
   const unsubscribeAuth = subscribeToAuth((user) => {
     currentUser = user;
     if (!user) {
+      syncCoordinator.setUser(null);
       updateCloudState({
         signedIn: false,
         displayName: null,
@@ -284,10 +281,12 @@ function bootstrap(): void {
       syncStatus: 'syncing',
       errorMessage: null,
     });
+    syncCoordinator.setUser({uid: user.uid, emailVerified: user.emailVerified});
 
     void (async () => {
       try {
         const cloudSave = await loadCloudSave(user);
+        if (currentUser?.uid !== user.uid) return;
         if (cloudSave) {
           saveData = mergeCloudAndLocalSave(saveData, cloudSave);
           persistSaveData(saveData);
@@ -299,11 +298,12 @@ function bootstrap(): void {
           engine.syncSaveData(saveData);
           ui.syncSave(saveData);
         }
-        await syncCloudProgress(true);
+        await syncCloudProgress(true, true);
         if (ui.getActiveSubModal() === 'leaderboard') {
           await refreshLeaderboard();
         }
       } catch (err) {
+        if (currentUser?.uid !== user.uid) return;
         updateCloudState({
           syncStatus: 'error',
           errorMessage: formatCloudErrorMessage(err),
@@ -311,6 +311,13 @@ function bootstrap(): void {
       }
     })();
   });
+
+  const onOnline = () => {
+    if (currentUser && (syncCoordinator.isDirty() || cloudState.syncStatus === 'error')) {
+      void syncCoordinator.retryIfDirty(saveData, true);
+    }
+  };
+  window.addEventListener('online', onOnline);
 
   // Title/GameOver Enter & Space start handshake
   window.addEventListener('keydown', (e) => {
@@ -333,6 +340,8 @@ function bootstrap(): void {
   }
 
   window.addEventListener('beforeunload', () => {
+    window.removeEventListener('online', onOnline);
+    syncCoordinator.dispose();
     unsubscribeAuth();
     engine.dispose();
     audio.dispose();

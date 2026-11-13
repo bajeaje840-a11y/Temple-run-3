@@ -88,8 +88,13 @@ export class PooledParticles {
   private cursor = 0;
 
   constructor(capacity = 220) {
-    const geo = new THREE.OctahedronGeometry(0.12, 0);
-    const mat = new THREE.MeshBasicMaterial({color: 0xffffff});
+    const geo = new THREE.IcosahedronGeometry(0.065, 1);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+    });
     this.mesh = new THREE.InstancedMesh(geo, mat, capacity);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
@@ -216,18 +221,25 @@ export class TempleWorld {
   private readonly matGem: THREE.MeshStandardMaterial;
   private readonly matWood: THREE.MeshStandardMaterial;
   private readonly matRope: THREE.MeshStandardMaterial;
-  private readonly matFire: THREE.MeshStandardMaterial;
+  private readonly matFire: THREE.MeshBasicMaterial;
+  private readonly matFireInner: THREE.MeshBasicMaterial;
   private readonly matBlade: THREE.MeshStandardMaterial;
   private readonly matFoliage: THREE.MeshStandardMaterial;
   private readonly matFoliageAlt: THREE.MeshStandardMaterial;
+  private readonly matLeafCard: THREE.MeshStandardMaterial;
   private readonly matTrunk: THREE.MeshStandardMaterial;
   private readonly matEyeGlow: THREE.MeshStandardMaterial;
+  private readonly torchHaloMat: THREE.SpriteMaterial;
 
   private readonly sharedFloorGeo: THREE.BoxGeometry;
   private readonly sharedCurbGeo: THREE.BoxGeometry;
   private readonly sharedCoinGeo: THREE.CylinderGeometry;
+  private readonly sharedCoinRimGeo: THREE.TorusGeometry;
   private readonly sharedGemGeo: THREE.OctahedronGeometry;
   private readonly sharedPillarGeo: THREE.BoxGeometry;
+  private readonly sharedFrondGeo: THREE.BufferGeometry;
+  private readonly sharedFernFrondGeo: THREE.BufferGeometry;
+  private readonly sharedFlameGeo: THREE.LatheGeometry;
 
   private quality: QualityLevel = 'high';
   private envTime = 0;
@@ -323,13 +335,14 @@ export class TempleWorld {
     }
     this.root.add(this.sunShaftGroup);
 
-    // 3. Ambient Floating Environmental Motes (golden pollen / embers)
+    // 3. Ambient Floating Environmental Motes (subtle golden pollen / embers)
     this.motePositions = new Float32Array(this.moteCount * 3);
     this.moteSeeds = new Float32Array(this.moteCount);
     for (let i = 0; i < this.moteCount; i++) {
-      this.motePositions[i * 3] = (Math.random() - 0.5) * 18;
-      this.motePositions[i * 3 + 1] = 0.3 + Math.random() * 6.5;
-      this.motePositions[i * 3 + 2] = (Math.random() - 0.5) * 32;
+      const sideX = (i % 2 === 0 ? -1 : 1) * (2.6 + Math.random() * 11.5);
+      this.motePositions[i * 3] = sideX;
+      this.motePositions[i * 3 + 1] = 1.2 + Math.random() * 6.2;
+      this.motePositions[i * 3 + 2] = -3 - Math.random() * 34;
       this.moteSeeds[i] = Math.random() * Math.PI * 2;
     }
     const moteGeo = this.trackGeo(new THREE.BufferGeometry());
@@ -337,9 +350,9 @@ export class TempleWorld {
     this.moteMat = new THREE.PointsMaterial({
       color: 0xffe89e,
       map: textures.glowSprite,
-      size: 0.36,
+      size: 0.16,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.44,
       alphaTest: 0.01,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -351,11 +364,11 @@ export class TempleWorld {
 
     // 4. Shared PBR Materials (with normal/roughness & vertex wind-sway shader)
     this.matCoin = new THREE.MeshStandardMaterial({
-      color: 0xffd240,
-      emissive: 0x6b4500,
-      emissiveIntensity: 0.45,
-      metalness: 0.92,
-      roughness: 0.16,
+      color: 0xffcc2e,
+      emissive: 0x5c3800,
+      emissiveIntensity: 0.22,
+      metalness: 0.88,
+      roughness: 0.22,
     });
     this.matGem = new THREE.MeshStandardMaterial({
       color: 0x38bdf8,
@@ -376,17 +389,24 @@ export class TempleWorld {
       roughness: 0.94,
       metalness: 0.02,
     });
-    this.matFire = new THREE.MeshStandardMaterial({
-      color: 0xff7722,
-      emissive: 0xff4500,
-      emissiveIntensity: 1.9,
-      roughness: 0.35,
-      metalness: 0.0,
+    this.matFire = new THREE.MeshBasicMaterial({
+      color: 0xff5a12,
+      transparent: true,
+      opacity: 0.78,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.matFireInner = new THREE.MeshBasicMaterial({
+      color: 0xffd252,
+      transparent: true,
+      opacity: 0.88,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
     this.matBlade = new THREE.MeshStandardMaterial({
-      color: 0xbac4cf,
+      color: 0xc2ccd6,
       metalness: 0.92,
-      roughness: 0.2,
+      roughness: 0.18,
     });
 
     this.matFoliage = new THREE.MeshStandardMaterial({
@@ -405,12 +425,23 @@ export class TempleWorld {
     });
     this.applyWindShader(this.matFoliageAlt, 'wind-foliage-b', 0.17);
 
+    this.matLeafCard = new THREE.MeshStandardMaterial({
+      color: 0xe6f8d4,
+      map: textures.foliageAlbedo,
+      alphaTest: 0.36,
+      roughness: 0.62,
+      metalness: 0.02,
+      side: THREE.DoubleSide,
+    });
+    this.applyWindShader(this.matLeafCard, 'wind-leaf-card', 0.16);
+
     this.matTrunk = new THREE.MeshStandardMaterial({
-      color: 0x4f3a27,
+      color: 0xb99672,
+      map: textures.barkAlbedo,
+      normalMap: textures.barkNormal,
+      normalScale: new THREE.Vector2(1.1, 1.1),
       roughness: 0.9,
       metalness: 0.02,
-      normalMap: textures.pathNormal,
-      normalScale: new THREE.Vector2(0.65, 0.65),
     });
     this.matEyeGlow = new THREE.MeshStandardMaterial({
       color: 0xff4b2b,
@@ -418,31 +449,60 @@ export class TempleWorld {
       emissiveIntensity: 2.1,
       roughness: 0.2,
     });
+    this.torchHaloMat = new THREE.SpriteMaterial({
+      map: textures.torchHaloSprite,
+      color: 0xff9a2e,
+      transparent: true,
+      opacity: 0.64,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
     this.materials.push(
       this.matCoin,
       this.matGem,
       this.matWood,
       this.matRope,
       this.matFire,
+      this.matFireInner,
       this.matBlade,
       this.matFoliage,
       this.matFoliageAlt,
+      this.matLeafCard,
       this.matTrunk,
-      this.matEyeGlow
+      this.matEyeGlow,
+      this.torchHaloMat
     );
 
     // Shared geometries
     this.sharedFloorGeo = new THREE.BoxGeometry(TRACK_WIDTH, 1.1, SEGMENT_LENGTH);
     this.sharedCurbGeo = new THREE.BoxGeometry(0.65, 0.72, SEGMENT_LENGTH);
-    this.sharedCoinGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.09, 16);
-    this.sharedGemGeo = new THREE.OctahedronGeometry(0.34, 0);
+    this.sharedCoinGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.06, 24);
+    this.sharedCoinRimGeo = new THREE.TorusGeometry(0.25, 0.032, 8, 24);
+    this.sharedGemGeo = new THREE.OctahedronGeometry(0.32, 0);
     this.sharedPillarGeo = new THREE.BoxGeometry(0.76, 2.2, 0.76);
+    this.sharedFrondGeo = this.createArchedFrondGeometry(2.65, 1.18, 0.72, 7);
+    this.sharedFernFrondGeo = this.createArchedFrondGeometry(1.35, 0.72, 0.42, 5);
+    this.sharedFlameGeo = new THREE.LatheGeometry(
+      [
+        new THREE.Vector2(0.001, 0),
+        new THREE.Vector2(0.18, 0.06),
+        new THREE.Vector2(0.22, 0.16),
+        new THREE.Vector2(0.14, 0.34),
+        new THREE.Vector2(0.05, 0.5),
+        new THREE.Vector2(0.001, 0.64),
+      ],
+      12
+    );
     this.geometries.push(
       this.sharedFloorGeo,
       this.sharedCurbGeo,
       this.sharedCoinGeo,
+      this.sharedCoinRimGeo,
       this.sharedGemGeo,
-      this.sharedPillarGeo
+      this.sharedPillarGeo,
+      this.sharedFrondGeo,
+      this.sharedFernFrondGeo,
+      this.sharedFlameGeo
     );
 
     // 5. Scenic Canyon Gorge Water & Lava Planes with Normal Maps
@@ -542,69 +602,137 @@ export class TempleWorld {
     }
   }
 
+  private createArchedFrondGeometry(
+    length: number,
+    width: number,
+    archHeight: number,
+    segments: number
+  ): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const z = t * length;
+      // Graceful parabolic palm frond arch: rises at base then droops toward tip
+      const y = Math.sin(t * Math.PI * 0.85) * archHeight - t * t * archHeight * 1.1;
+      const halfW = width * 0.5 * Math.sin(Math.min(1, t * 0.85 + 0.15) * Math.PI * 0.92);
+      const vFold = -0.08 * halfW;
+
+      // Left edge, center ridge, right edge (V-folded cross section for 3D depth)
+      positions.push(-halfW, y + vFold, z);
+      positions.push(0, y + 0.03, z);
+      positions.push(halfW, y + vFold, z);
+
+      uvs.push(0, t);
+      uvs.push(0.5, t);
+      uvs.push(1, t);
+
+      if (i < segments) {
+        const base = i * 3;
+        const next = (i + 1) * 3;
+        indices.push(base, next, base + 1);
+        indices.push(base + 1, next, next + 1);
+        indices.push(base + 1, next + 1, base + 2);
+        indices.push(base + 2, next + 1, next + 2);
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+  }
+
   private buildCanyonRidge(textures: ProceduralTextureSet, side: -1 | 1): THREE.Group {
     const group = new THREE.Group();
     const cliffMat = new THREE.MeshStandardMaterial({
-      color: 0x455e43,
+      color: 0x56644f,
       roughness: 0.9,
-      metalness: 0.02,
+      metalness: 0.04,
+      map: textures.stoneAlbedo,
       normalMap: textures.stoneNormal,
-      normalScale: new THREE.Vector2(1.4, 1.4),
+      normalScale: new THREE.Vector2(1.6, 1.6),
     });
     const cliffCapMat = new THREE.MeshStandardMaterial({
-      color: 0x3b6e38,
-      roughness: 0.88,
+      color: 0x455a3b,
+      roughness: 0.92,
       metalness: 0.02,
+      map: textures.turfAlbedo,
+      normalMap: textures.turfNormal,
+      normalScale: new THREE.Vector2(1.2, 1.2),
     });
     const waterfallMat = new THREE.MeshStandardMaterial({
-      color: 0x7ae8ff,
+      color: 0x8beeff,
       emissive: 0x26b0cc,
-      emissiveIntensity: 0.55,
+      emissiveIntensity: 0.65,
       transparent: true,
-      opacity: 0.84,
-      roughness: 0.15,
+      opacity: 0.82,
+      roughness: 0.14,
     });
-    this.materials.push(cliffMat, cliffCapMat, waterfallMat);
+    const foamMat = new THREE.MeshStandardMaterial({
+      color: 0xe6fbff,
+      emissive: 0x80e5ff,
+      emissiveIntensity: 0.45,
+      transparent: true,
+      opacity: 0.72,
+      roughness: 0.35,
+    });
+    this.materials.push(cliffMat, cliffCapMat, waterfallMat, foamMat);
+
+    // Tapered stratified rock spire geometry + rugged lower rock buttresses
+    const cragGeo = this.trackGeo(new THREE.CylinderGeometry(3.2, 13.5, 22, 7, 3));
+    const buttressGeo = this.trackGeo(new THREE.CylinderGeometry(4.2, 10.5, 9.5, 7));
 
     for (let i = 0; i < 8; i++) {
       const z = -90 + i * 28;
-      const xOffset = side * (36 + (i % 3) * 9);
-      const height = 18 + (i % 4) * 7;
-      const radius = 14 + (i % 3) * 4;
+      const xOffset = side * (39 + (i % 3) * 8);
+      const scaleH = 0.85 + (i % 4) * 0.28;
+      const scaleR = 0.9 + (i % 3) * 0.22;
 
-      const peak = new THREE.Mesh(
-        this.trackGeo(new THREE.ConeGeometry(radius, height, 7)),
-        cliffMat
-      );
-      peak.position.set(xOffset, height * 0.35 - 11, z);
-      peak.rotation.y = i * 0.7;
-      group.add(peak);
+      const crag = new THREE.Mesh(cragGeo, cliffMat);
+      crag.position.set(xOffset, scaleH * 8 - 11.5, z);
+      crag.scale.set(scaleR, scaleH, scaleR);
+      crag.rotation.y = i * 0.75;
+      group.add(crag);
 
-      // Multi-lobe organic jungle canopy & mossy boulder shoulders hugging the cliff
-      for (let c = 0; c < 3; c++) {
-        const lobe = new THREE.Mesh(
-          this.trackGeo(new THREE.IcosahedronGeometry(radius * (0.28 + (c % 2) * 0.08), 0)),
-          cliffCapMat
-        );
-        const angle = c * 2.1 + i * 0.5;
-        lobe.position.set(
-          xOffset - side * (radius * 0.25) + Math.cos(angle) * (radius * 0.22),
-          height * 0.42 - 9.5 + c * 0.7,
-          z + Math.sin(angle) * (radius * 0.22)
-        );
-        lobe.scale.set(1.15, 0.85, 1.15);
-        lobe.rotation.set(c * 0.4, angle, 0);
-        group.add(lobe);
+      // Grounded stone & mossy foothills flanking the base of each canyon spire
+      const foothill = new THREE.Mesh(buttressGeo, i % 2 === 0 ? cliffMat : cliffCapMat);
+      foothill.position.set(xOffset - side * 5.2, -9.2, z + (i % 2 === 0 ? -4 : 4));
+      foothill.scale.set(scaleR * 0.85, 0.9 + (i % 3) * 0.22, scaleR * 0.85);
+      foothill.rotation.y = i * 1.1;
+      group.add(foothill);
+
+      // Crown canopy fronds atop the stone monolith
+      const crestY = scaleH * 19 - 11.6;
+      for (let f = 0; f < 4; f++) {
+        const frond = new THREE.Mesh(this.sharedFrondGeo, this.matLeafCard);
+        frond.position.set(xOffset, crestY, z);
+        frond.rotation.order = 'YXZ';
+        frond.rotation.y = (f / 4) * Math.PI * 2 + i * 0.5;
+        frond.rotation.x = 0.18;
+        frond.scale.setScalar(1.35);
+        group.add(frond);
       }
 
       if (i === 3 || i === 6) {
         const fall = new THREE.Mesh(
-          this.trackGeo(new THREE.PlaneGeometry(3.5, 16)),
+          this.trackGeo(new THREE.PlaneGeometry(3.8, 17)),
           waterfallMat
         );
-        fall.position.set(xOffset - side * (radius * 0.45), -4.5, z);
+        fall.position.set(xOffset - side * 6.4, -3.5, z);
         fall.rotation.y = side === -1 ? Math.PI * 0.42 : -Math.PI * 0.42;
         group.add(fall);
+
+        const foam = new THREE.Mesh(
+          this.trackGeo(new THREE.CylinderGeometry(3.6, 4.5, 0.5, 12)),
+          foamMat
+        );
+        foam.position.set(xOffset - side * 6.8, -11.3, z);
+        group.add(foam);
       }
     }
     return group;
@@ -620,39 +748,74 @@ export class TempleWorld {
   private buildDistantTempleLandmark(): THREE.Group {
     const group = new THREE.Group();
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x76745e,
-      roughness: 0.86,
-      metalness: 0.04,
+      color: 0x7b7862,
+      roughness: 0.85,
+      metalness: 0.05,
       map: this.textures.stoneAlbedo,
       normalMap: this.textures.stoneNormal,
-      normalScale: new THREE.Vector2(1.0, 1.0),
+      normalScale: new THREE.Vector2(1.2, 1.2),
+    });
+    const accentStone = new THREE.MeshStandardMaterial({
+      color: 0x5c5848,
+      roughness: 0.88,
+      metalness: 0.06,
+      map: this.textures.stoneAlbedo,
     });
     const goldTrim = new THREE.MeshStandardMaterial({
-      color: 0xe8b948,
-      emissive: 0x5c3e08,
-      emissiveIntensity: 0.55,
-      metalness: 0.82,
-      roughness: 0.22,
+      color: 0xebb948,
+      emissive: 0x6b4508,
+      emissiveIntensity: 0.65,
+      metalness: 0.86,
+      roughness: 0.2,
     });
-    this.materials.push(mat, goldTrim);
+    this.materials.push(mat, accentStone, goldTrim);
 
+    // 5-tier stepped Mayan pyramid
     const tiers = [
-      {w: 28, h: 6, y: -6},
-      {w: 21, h: 6, y: 0},
-      {w: 14, h: 5.5, y: 5.7},
-      {w: 8, h: 5, y: 10.8},
+      {w: 32, h: 4.5, y: -7.5},
+      {w: 25, h: 4.5, y: -3.0},
+      {w: 19, h: 4.2, y: 1.3},
+      {w: 13.5, h: 4.0, y: 5.4},
+      {w: 8.6, h: 3.6, y: 9.2},
     ];
     for (const t of tiers) {
-      const geo = new THREE.BoxGeometry(t.w, t.h, t.w);
-      this.geometries.push(geo);
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = t.y;
-      group.add(mesh);
+      const tierMesh = new THREE.Mesh(
+        this.trackGeo(new THREE.BoxGeometry(t.w, t.h, t.w)),
+        mat
+      );
+      tierMesh.position.y = t.y;
+      group.add(tierMesh);
     }
-    const crownGeo = new THREE.OctahedronGeometry(2.6, 0);
-    this.geometries.push(crownGeo);
-    const crown = new THREE.Mesh(crownGeo, goldTrim);
-    crown.position.y = 15.8;
+
+    // Sloped grand central staircase ramp facing player
+    const stairRamp = new THREE.Mesh(
+      this.trackGeo(new THREE.BoxGeometry(5.6, 22, 3.2)),
+      accentStone
+    );
+    stairRamp.position.set(0, 1.2, 10.2);
+    stairRamp.rotation.x = -0.56;
+    group.add(stairRamp);
+
+    // Upper sanctuary shrine + golden sun altar crown
+    const shrine = new THREE.Mesh(
+      this.trackGeo(new THREE.BoxGeometry(6.2, 4.2, 6.2)),
+      accentStone
+    );
+    shrine.position.y = 13.1;
+    group.add(shrine);
+
+    const sunDisc = new THREE.Mesh(
+      this.trackGeo(new THREE.TorusGeometry(2.4, 0.36, 8, 24)),
+      goldTrim
+    );
+    sunDisc.position.y = 17.2;
+    group.add(sunDisc);
+
+    const crown = new THREE.Mesh(
+      this.trackGeo(new THREE.OctahedronGeometry(1.5, 0)),
+      goldTrim
+    );
+    crown.position.y = 17.2;
     group.add(crown);
 
     group.position.set(-28, 0, -110);
@@ -795,10 +958,11 @@ export class TempleWorld {
       metalness: pattern.biome === 'golden_kingdom' ? 0.55 : 0.1,
     });
     const mossMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(biome.mossColor),
-      normalMap: this.textures.pathNormal,
-      normalScale: new THREE.Vector2(0.75, 0.75),
-      roughness: 0.9,
+      color: new THREE.Color(biome.mossColor).lerp(new THREE.Color(0x527a3c), 0.35),
+      map: this.textures.turfAlbedo,
+      normalMap: this.textures.turfNormal,
+      normalScale: new THREE.Vector2(1.05, 1.05),
+      roughness: 0.92,
       metalness: 0.02,
     });
     this.materials.push(stoneMat, trimMat, mossMat);
@@ -1025,26 +1189,32 @@ export class TempleWorld {
 
   private buildIdolGuardian(stoneMat: THREE.Material, glowColor: number): THREE.Group {
     const g = new THREE.Group();
-    const base = new THREE.Mesh(this.trackGeo(new THREE.BoxGeometry(1.08, 0.36, 1.08)), stoneMat);
-    base.position.y = 0.18;
+    const plinth = new THREE.Mesh(this.trackGeo(new THREE.BoxGeometry(1.18, 0.24, 1.18)), stoneMat);
+    plinth.position.y = 0.12;
+    plinth.castShadow = true;
+    g.add(plinth);
+
+    const base = new THREE.Mesh(this.trackGeo(new THREE.BoxGeometry(0.96, 0.22, 0.96)), stoneMat);
+    base.position.y = 0.35;
     base.castShadow = true;
     g.add(base);
 
     const body = new THREE.Mesh(this.sharedPillarGeo, stoneMat);
-    body.position.y = 1.35;
+    body.position.y = 1.48;
     body.castShadow = true;
     g.add(body);
 
-    const nose = new THREE.Mesh(this.trackGeo(new THREE.BoxGeometry(0.18, 0.42, 0.16)), stoneMat);
-    nose.position.set(0, 1.56, 0.4);
+    // Sculpted cheek ridges, nose bridge & recessed mouth
+    const nose = new THREE.Mesh(this.trackGeo(new THREE.BoxGeometry(0.18, 0.48, 0.18)), stoneMat);
+    nose.position.set(0, 1.66, 0.4);
     g.add(nose);
 
-    const jaw = new THREE.Mesh(this.trackGeo(new THREE.BoxGeometry(0.46, 0.22, 0.12)), this.matWood);
-    jaw.position.set(0, 1.08, 0.36);
+    const jaw = new THREE.Mesh(this.trackGeo(new THREE.BoxGeometry(0.5, 0.24, 0.14)), this.matWood);
+    jaw.position.set(0, 1.16, 0.36);
     g.add(jaw);
 
-    const brow = new THREE.Mesh(this.trackGeo(new THREE.BoxGeometry(0.92, 0.26, 0.9)), stoneMat);
-    brow.position.y = 2.45;
+    const brow = new THREE.Mesh(this.trackGeo(new THREE.BoxGeometry(0.98, 0.28, 0.96)), stoneMat);
+    brow.position.y = 2.52;
     brow.castShadow = true;
     g.add(brow);
 
@@ -1052,48 +1222,74 @@ export class TempleWorld {
     eyeMat.color.setHex(glowColor);
     eyeMat.emissive.setHex(glowColor);
     this.materials.push(eyeMat);
-    const eyeGeo = this.trackGeo(new THREE.BoxGeometry(0.15, 0.12, 0.12));
-    for (const ex of [-0.19, 0.19]) {
+    const eyeGeo = this.trackGeo(new THREE.BoxGeometry(0.17, 0.12, 0.12));
+    for (const ex of [-0.2, 0.2]) {
       const eye = new THREE.Mesh(eyeGeo, eyeMat);
-      eye.position.set(ex, 1.88, 0.37);
+      eye.position.set(ex, 1.98, 0.38);
       g.add(eye);
     }
 
     const bowl = new THREE.Mesh(
-      this.trackGeo(new THREE.CylinderGeometry(0.32, 0.18, 0.2, 8)),
+      this.trackGeo(new THREE.CylinderGeometry(0.36, 0.2, 0.24, 10)),
       stoneMat
     );
-    bowl.position.y = 2.66;
+    bowl.position.y = 2.76;
     g.add(bowl);
-    const flame = new THREE.Mesh(this.trackGeo(new THREE.ConeGeometry(0.22, 0.48, 8)), this.matFire);
-    flame.position.y = 2.92;
+
+    const flame = new THREE.Mesh(this.sharedFlameGeo, this.matFire);
+    flame.position.y = 2.8;
+    flame.scale.set(1.15, 0.92, 1.15);
     g.add(flame);
+
+    const flameCore = new THREE.Mesh(this.sharedFlameGeo, this.matFireInner);
+    flameCore.position.y = 2.82;
+    flameCore.scale.set(0.62, 0.58, 0.62);
+    g.add(flameCore);
+
+    const halo = new THREE.Sprite(this.torchHaloMat);
+    halo.position.y = 3.08;
+    halo.scale.set(1.8, 1.8, 1);
+    g.add(halo);
 
     return g;
   }
 
   private buildTempleArch(stoneMat: THREE.Material, glowColor: number): THREE.Group {
     const g = new THREE.Group();
-    const colGeo = this.trackGeo(new THREE.BoxGeometry(0.95, 5.2, 0.95));
+    const plinthGeo = this.trackGeo(new THREE.BoxGeometry(1.3, 0.5, 1.3));
+    const colGeo = this.trackGeo(new THREE.BoxGeometry(0.95, 4.9, 0.95));
+    const capGeo = this.trackGeo(new THREE.BoxGeometry(1.35, 0.45, 1.3));
     for (const sx of [-TRACK_WIDTH / 2 - 0.3, TRACK_WIDTH / 2 + 0.3]) {
+      const plinth = new THREE.Mesh(plinthGeo, stoneMat);
+      plinth.position.set(sx, 0.25, 0);
       const col = new THREE.Mesh(colGeo, stoneMat);
-      col.position.set(sx, 2.6, 0);
+      col.position.set(sx, 2.7, 0);
       col.castShadow = true;
-      g.add(col);
+      const cap = new THREE.Mesh(capGeo, stoneMat);
+      cap.position.set(sx, 5.05, 0);
+      g.add(plinth, col, cap);
     }
     const lintel = new THREE.Mesh(
-      this.trackGeo(new THREE.BoxGeometry(TRACK_WIDTH + 2.2, 1.0, 1.1)),
+      this.trackGeo(new THREE.BoxGeometry(TRACK_WIDTH + 2.4, 0.95, 1.15)),
       stoneMat
     );
-    lintel.position.set(0, 5.2, 0);
+    lintel.position.set(0, 5.55, 0);
     g.add(lintel);
 
     const gem = new THREE.Mesh(this.sharedGemGeo, this.matGem.clone());
     (gem.material as THREE.MeshStandardMaterial).color.setHex(glowColor);
     (gem.material as THREE.MeshStandardMaterial).emissive.setHex(glowColor);
     this.materials.push(gem.material as THREE.Material);
-    gem.position.set(0, 5.2, 0.65);
+    gem.position.set(0, 5.55, 0.68);
     g.add(gem);
+
+    // Swaying jungle vines hanging from the arch lintel
+    const vineGeo = this.trackGeo(new THREE.CylinderGeometry(0.035, 0.02, 1.35, 5));
+    for (const vx of [-2.3, -1.1, 1.4, 2.4]) {
+      const vine = new THREE.Mesh(vineGeo, this.matFoliage);
+      vine.position.set(vx, 4.45, 0.52);
+      g.add(vine);
+    }
     return g;
   }
 
@@ -1111,11 +1307,18 @@ export class TempleWorld {
     wall.castShadow = true;
     g.add(wall);
 
+    const cornice = new THREE.Mesh(
+      this.trackGeo(new THREE.BoxGeometry(TRACK_WIDTH + 1.8, 0.42, 1.5)),
+      stoneMat
+    );
+    cornice.position.set(0, 3.9, -4.0);
+    g.add(cornice);
+
     const arrowMat = new THREE.MeshStandardMaterial({
       color: 0xffd95a,
       emissive: glowColor,
       emissiveIntensity: 1.5,
-      metalness: 0.7,
+      metalness: 0.72,
       roughness: 0.2,
     });
     this.materials.push(arrowMat);
@@ -1132,28 +1335,31 @@ export class TempleWorld {
 
   private buildTropicalFernCluster(withMushroom: boolean): THREE.Group {
     const g = new THREE.Group();
-    const leafGeo = this.trackGeo(new THREE.ConeGeometry(0.32, 1.35, 5));
-    for (let i = 0; i < 5; i++) {
-      const ang = (i / 5) * Math.PI * 2;
-      const frond = new THREE.Mesh(leafGeo, i % 2 === 0 ? this.matFoliage : this.matFoliageAlt);
-      frond.position.set(Math.cos(ang) * 0.28, 0.45, Math.sin(ang) * 0.28);
-      frond.rotation.z = -Math.cos(ang) * 0.75;
-      frond.rotation.x = Math.sin(ang) * 0.75;
-      g.add(frond);
+    for (let tier = 0; tier < 2; tier++) {
+      const count = tier === 0 ? 6 : 4;
+      for (let i = 0; i < count; i++) {
+        const ang = (i / count) * Math.PI * 2 + tier * 0.45;
+        const frond = new THREE.Mesh(this.sharedFernFrondGeo, this.matLeafCard);
+        frond.position.set(0, 0.1 + tier * 0.14, 0);
+        frond.rotation.order = 'YXZ';
+        frond.rotation.y = ang;
+        frond.rotation.x = tier === 0 ? 0.28 : -0.18;
+        g.add(frond);
+      }
     }
     if (withMushroom) {
-      const capMat = new THREE.MeshStandardMaterial({color: 0xd95338, roughness: 0.52});
+      const capMat = new THREE.MeshStandardMaterial({color: 0xd95338, roughness: 0.5});
       this.materials.push(capMat);
       const stem = new THREE.Mesh(
         this.trackGeo(new THREE.CylinderGeometry(0.06, 0.08, 0.3, 8)),
         this.matWood
       );
-      stem.position.set(0.42, 0.15, 0.2);
+      stem.position.set(0.45, 0.15, 0.22);
       const cap = new THREE.Mesh(
-        this.trackGeo(new THREE.SphereGeometry(0.18, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55)),
+        this.trackGeo(new THREE.SphereGeometry(0.18, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55)),
         capMat
       );
-      cap.position.set(0.42, 0.28, 0.2);
+      cap.position.set(0.45, 0.28, 0.22);
       g.add(stem, cap);
     }
     return g;
@@ -1161,38 +1367,44 @@ export class TempleWorld {
 
   private buildJungleTree(): THREE.Group {
     const g = new THREE.Group();
-    const trunk = new THREE.Mesh(
-      this.trackGeo(new THREE.CylinderGeometry(0.18, 0.38, 4.4, 8)),
+    // Two-part gracefully curved tapered palm trunk with furrowed bark
+    const lowerTrunk = new THREE.Mesh(
+      this.trackGeo(new THREE.CylinderGeometry(0.26, 0.42, 2.5, 10)),
       this.matTrunk
     );
-    trunk.position.y = 2.2;
-    trunk.rotation.z = 0.08;
-    trunk.castShadow = true;
-    g.add(trunk);
+    lowerTrunk.position.set(0, 1.25, 0);
+    lowerTrunk.rotation.z = 0.06;
+    lowerTrunk.castShadow = true;
+    g.add(lowerTrunk);
 
-    // Central crown hub + 2 staggered tiers of sweeping wind-animated palm fronds
-    const hub = new THREE.Mesh(
-      this.trackGeo(new THREE.IcosahedronGeometry(0.45, 0)),
-      this.matFoliage
+    const upperTrunk = new THREE.Mesh(
+      this.trackGeo(new THREE.CylinderGeometry(0.16, 0.26, 2.5, 10)),
+      this.matTrunk
     );
-    hub.position.set(-0.15, 4.45, 0);
-    g.add(hub);
+    upperTrunk.position.set(-0.18, 3.65, 0);
+    upperTrunk.rotation.z = 0.12;
+    upperTrunk.castShadow = true;
+    g.add(upperTrunk);
 
-    const frondGeo = this.trackGeo(new THREE.ConeGeometry(0.42, 2.5, 5));
+    // Fibrous palm crown collar
+    const crownHub = new THREE.Mesh(
+      this.trackGeo(new THREE.SphereGeometry(0.32, 10, 8)),
+      this.matTrunk
+    );
+    crownHub.position.set(-0.34, 4.82, 0);
+    g.add(crownHub);
+
+    // Two staggered tiers of real arched feathered palm fronds
     for (let tier = 0; tier < 2; tier++) {
-      const count = tier === 0 ? 7 : 5;
+      const count = tier === 0 ? 8 : 6;
       for (let i = 0; i < count; i++) {
-        const ang = (i / count) * Math.PI * 2 + tier * 0.4;
-        const frond = new THREE.Mesh(
-          frondGeo,
-          (i + tier) % 2 === 0 ? this.matFoliage : this.matFoliageAlt
-        );
-        const r = tier === 0 ? 1.05 : 0.75;
-        frond.position.set(Math.cos(ang) * r - 0.15, 4.35 + tier * 0.25, Math.sin(ang) * r);
+        const ang = (i / count) * Math.PI * 2 + tier * 0.35;
+        const frond = new THREE.Mesh(this.sharedFrondGeo, this.matLeafCard);
+        frond.position.set(-0.34, 4.84 + tier * 0.16, 0);
         frond.rotation.order = 'YXZ';
-        frond.rotation.y = -ang;
-        frond.rotation.z = tier === 0 ? -1.24 : -0.82;
-        frond.scale.set(0.95, 1.0, 0.32);
+        frond.rotation.y = ang;
+        frond.rotation.x = tier === 0 ? 0.24 : -0.22;
+        frond.scale.setScalar(tier === 0 ? 1.05 : 0.85);
         frond.castShadow = true;
         g.add(frond);
       }
@@ -1206,15 +1418,21 @@ export class TempleWorld {
     withTree: boolean
   ): THREE.Group {
     const g = new THREE.Group();
-    const rock = new THREE.Mesh(this.trackGeo(new THREE.DodecahedronGeometry(3.2, 1)), stoneMat);
-    rock.scale.set(1.2, 1.6, 1.3);
+    const rock = new THREE.Mesh(
+      this.trackGeo(new THREE.CylinderGeometry(2.8, 4.4, 5.2, 8)),
+      stoneMat
+    );
+    rock.position.y = 0;
     g.add(rock);
-    const cap = new THREE.Mesh(this.trackGeo(new THREE.CylinderGeometry(2.8, 3.1, 0.8, 8)), mossMat);
-    cap.position.y = 2.6;
+    const cap = new THREE.Mesh(
+      this.trackGeo(new THREE.CylinderGeometry(2.9, 3.1, 0.75, 8)),
+      mossMat
+    );
+    cap.position.y = 2.75;
     g.add(cap);
     if (withTree) {
       const tree = this.buildJungleTree();
-      tree.position.y = 2.9;
+      tree.position.y = 3.0;
       g.add(tree);
     }
     return g;
@@ -1231,15 +1449,15 @@ export class TempleWorld {
     switch (spec.type) {
       case 'stone_barrier': {
         const wall = new THREE.Mesh(
-          this.trackGeo(new THREE.BoxGeometry(width, 0.92, 0.65)),
+          this.trackGeo(new THREE.BoxGeometry(width, 0.88, 0.65)),
           stoneMat
         );
-        wall.position.y = 0.46;
+        wall.position.y = 0.44;
         wall.castShadow = true;
         wall.receiveShadow = true;
         g.add(wall);
         const cap = new THREE.Mesh(
-          this.trackGeo(new THREE.BoxGeometry(width + 0.14, 0.18, 0.78)),
+          this.trackGeo(new THREE.BoxGeometry(width + 0.16, 0.2, 0.8)),
           this.matWood
         );
         cap.position.y = 0.96;
@@ -1249,24 +1467,29 @@ export class TempleWorld {
 
       case 'fallen_tree': {
         const log = new THREE.Mesh(
-          this.trackGeo(new THREE.CylinderGeometry(0.42, 0.48, width, 12)),
+          this.trackGeo(new THREE.CylinderGeometry(0.42, 0.48, width, 14)),
           this.matTrunk
         );
         log.rotation.z = Math.PI / 2;
         log.position.y = 0.44;
         log.castShadow = true;
         g.add(log);
-        const mossPatch = new THREE.Mesh(
-          this.trackGeo(new THREE.BoxGeometry(width * 0.55, 0.18, 0.45)),
-          this.matFoliage
+        const stub = new THREE.Mesh(
+          this.trackGeo(new THREE.CylinderGeometry(0.11, 0.16, 0.55, 8)),
+          this.matTrunk
         );
-        mossPatch.position.set(0.15, 0.86, 0);
-        g.add(mossPatch);
+        stub.position.set(width * 0.22, 0.86, 0.12);
+        stub.rotation.z = -0.5;
+        g.add(stub);
+        const fern = new THREE.Mesh(this.sharedFernFrondGeo, this.matLeafCard);
+        fern.position.set(-width * 0.2, 0.82, 0);
+        fern.scale.setScalar(0.75);
+        g.add(fern);
         break;
       }
 
       case 'low_branch': {
-        const postGeo = this.trackGeo(new THREE.BoxGeometry(0.42, 3.0, 0.48));
+        const postGeo = this.trackGeo(new THREE.BoxGeometry(0.44, 3.0, 0.48));
         const halfSpan = width / 2 + 0.1;
         for (const sx of [-halfSpan, halfSpan]) {
           const post = new THREE.Mesh(postGeo, stoneMat);
@@ -1275,20 +1498,17 @@ export class TempleWorld {
           g.add(post);
         }
         const beam = new THREE.Mesh(
-          this.trackGeo(new THREE.CylinderGeometry(0.42, 0.46, width + 0.6, 12)),
+          this.trackGeo(new THREE.CylinderGeometry(0.4, 0.46, width + 0.65, 14)),
           this.matTrunk
         );
         beam.rotation.z = Math.PI / 2;
-        beam.position.set(0, 1.52, 0);
+        beam.position.set(0, 1.54, 0);
         beam.castShadow = true;
         g.add(beam);
-        for (let vx = -width * 0.35; vx <= width * 0.35; vx += 0.65) {
-          const vine = new THREE.Mesh(
-            this.trackGeo(new THREE.ConeGeometry(0.15, 0.45, 5)),
-            this.matFoliageAlt
-          );
-          vine.rotation.x = Math.PI;
-          vine.position.set(vx, 1.15, 0.25);
+        const vineGeo = this.trackGeo(new THREE.CylinderGeometry(0.035, 0.015, 0.52, 5));
+        for (let vx = -width * 0.35; vx <= width * 0.35; vx += 0.55) {
+          const vine = new THREE.Mesh(vineGeo, this.matFoliageAlt);
+          vine.position.set(vx, 1.05, 0.22);
           g.add(vine);
         }
         break;
@@ -1296,18 +1516,25 @@ export class TempleWorld {
 
       case 'fire_trap': {
         const brazier = new THREE.Mesh(
-          this.trackGeo(new THREE.CylinderGeometry(0.55, 0.72, 0.38, 10)),
+          this.trackGeo(new THREE.CylinderGeometry(0.58, 0.74, 0.38, 12)),
           stoneMat
         );
         brazier.position.y = 0.19;
         g.add(brazier);
-        const flameCore = new THREE.Mesh(
-          this.trackGeo(new THREE.ConeGeometry(0.46, 1.15, 8)),
-          this.matFire
-        );
-        flameCore.position.y = 0.85;
-        flameCore.name = 'animatedFlame';
-        g.add(flameCore);
+        const flameGroup = new THREE.Group();
+        flameGroup.position.y = 0.35;
+        flameGroup.name = 'animatedFlame';
+        const flameOuter = new THREE.Mesh(this.sharedFlameGeo, this.matFire);
+        flameOuter.position.y = 0.0;
+        flameOuter.scale.set(2.1, 1.8, 2.1);
+        const flameInner = new THREE.Mesh(this.sharedFlameGeo, this.matFireInner);
+        flameInner.position.y = 0.02;
+        flameInner.scale.set(1.15, 1.15, 1.15);
+        const halo = new THREE.Sprite(this.torchHaloMat);
+        halo.position.y = 0.68;
+        halo.scale.set(2.2, 2.2, 1);
+        flameGroup.add(flameOuter, flameInner, halo);
+        g.add(flameGroup);
         break;
       }
 
@@ -1436,10 +1663,7 @@ export class TempleWorld {
       const disc = new THREE.Mesh(this.sharedCoinGeo, this.matCoin);
       disc.rotation.x = Math.PI / 2;
       g.add(disc);
-      const rim = new THREE.Mesh(
-        this.trackGeo(new THREE.TorusGeometry(0.33, 0.045, 6, 4)),
-        this.matCoin
-      );
+      const rim = new THREE.Mesh(this.sharedCoinRimGeo, this.matCoin);
       g.add(rim);
     }
     return g;

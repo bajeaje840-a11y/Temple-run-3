@@ -202,22 +202,14 @@ service cloud.firestore {
         && isValidId(userId)
         && request.auth.uid == userId
         && isValidPlayerSave(incoming())
-        && incoming().ownerId == existing().ownerId
-        && incoming().diff(existing()).affectedKeys().hasOnly([
-          'version', 'highScore', 'bestDistance', 'coins',
-          'totalCoinsCollected', 'totalDistance', 'totalJumps', 'totalSlides',
-          'totalPowerUps', 'runsPlayed', 'selectedCharacter', 'unlockedCharacters',
-          'selectedStartBiome', 'unlockedBiomes', 'upgradeLevels',
-          'completedMissions', 'unlockedAchievements', 'dailyMissions',
-          'settings', 'updatedAt'
-        ]);
+        && (!('ownerId' in existing()) || incoming().ownerId == existing().ownerId);
       allow delete: if isVerifiedUser() && isValidId(userId) && request.auth.uid == userId;
     }
 
     match /leaderboard/{userId} {
       allow get: if isSignedIn()
         && isValidId(userId)
-        && (resource == null || existing().highScore >= 0);
+        && (resource == null || !('highScore' in existing()) || existing().highScore >= 0);
       allow list: if isSignedIn()
         && existing().highScore >= 0
         && request.query.limit <= 50;
@@ -229,12 +221,9 @@ service cloud.firestore {
         && isValidId(userId)
         && request.auth.uid == userId
         && isValidLeaderboardEntry(incoming())
-        && incoming().uid == existing().uid
-        && incoming().highScore >= existing().highScore
-        && incoming().bestDistance >= existing().bestDistance
-        && incoming().diff(existing()).affectedKeys().hasOnly([
-          'displayName', 'selectedCharacter', 'highScore', 'bestDistance', 'updatedAt'
-        ]);
+        && (!('uid' in existing()) || incoming().uid == existing().uid)
+        && (!('highScore' in existing()) || incoming().highScore >= existing().highScore)
+        && (!('bestDistance' in existing()) || incoming().bestDistance >= existing().bestDistance);
       allow delete: if isVerifiedUser() && isValidId(userId) && request.auth.uid == userId;
     }
   }

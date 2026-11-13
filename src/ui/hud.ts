@@ -66,6 +66,7 @@ export interface HudActions {
   onButtonClickSfx: () => void;
   onSignInGoogle: () => void;
   onSignOutGoogle: () => void;
+  onRetryCloudSync: () => void;
   onRefreshLeaderboard: () => void;
 }
 
@@ -297,6 +298,9 @@ export class TempleUI {
         case 'google-signout':
           this.actions.onSignOutGoogle();
           break;
+        case 'retry-cloud-sync':
+          this.actions.onRetryCloudSync();
+          break;
         case 'refresh-leaderboard':
           this.actions.onRefreshLeaderboard();
           break;
@@ -449,13 +453,22 @@ export class TempleUI {
           ? '#ffd95a'
           : '#2fd69d';
 
+    const tooltipAttr = this.cloudState.errorMessage
+      ? ` title="${escapeHtml(this.cloudState.errorMessage)}"`
+      : '';
+    const retryBtn =
+      this.cloudState.syncStatus === 'error'
+        ? `<button type="button" class="account-signout-btn" data-action="retry-cloud-sync" style="border-color:rgba(240,90,70,0.65); color:#ffd95a">Retry</button>`
+        : '';
+
     this.cloudAccountSlotEl.innerHTML = `
-      <div class="account-chip" data-testid="account-chip">
+      <div class="account-chip" data-testid="account-chip"${tooltipAttr}>
         <span style="color:${statusColor}; display:flex">${svgIcon('cloud', 16)}</span>
         <div class="account-chip-meta">
           <span class="account-name">${name}</span>
           <span class="account-sync-status" style="color:${statusColor}">${statusText}</span>
         </div>
+        ${retryBtn}
         <button type="button" class="account-signout-btn" data-action="google-signout" aria-label="Sign Out">
           Sign Out
         </button>
@@ -984,11 +997,18 @@ export class TempleUI {
             <span class="catalog-name">Cloud Save (Firebase)</span>
             <span class="catalog-desc">${cloudStatusCopy}${this.cloudState.errorMessage ? ` · ${escapeHtml(this.cloudState.errorMessage)}` : ''}</span>
           </div>
-          ${
-            this.cloudState.signedIn
-              ? `<button type="button" class="btn-temple-secondary" data-action="google-signout">Sign Out</button>`
-              : `<button type="button" class="btn-temple-secondary" data-action="google-signin">${svgIcon('cloud', 16)}<span>Sign In</span></button>`
-          }
+          <div style="display:flex; gap:8px; align-items:center">
+            ${
+              this.cloudState.signedIn && this.cloudState.syncStatus === 'error'
+                ? `<button type="button" class="btn-temple-secondary" data-action="retry-cloud-sync">Retry Sync</button>`
+                : ''
+            }
+            ${
+              this.cloudState.signedIn
+                ? `<button type="button" class="btn-temple-secondary" data-action="google-signout">Sign Out</button>`
+                : `<button type="button" class="btn-temple-secondary" data-action="google-signin">${svgIcon('cloud', 16)}<span>Sign In</span></button>`
+            }
+          </div>
         </div>
       `;
 

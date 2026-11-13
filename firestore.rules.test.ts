@@ -94,14 +94,18 @@ function evaluateRule(params: {
     if (op === 'get') return 'ALLOW';
     if (!isVerified) return 'PERMISSION_DENIED';
     if (!isValidPlayerSave(incoming, auth)) return 'PERMISSION_DENIED';
-    if (op === 'update' && existing && incoming.ownerId !== existing.ownerId) return 'PERMISSION_DENIED';
+    if (op === 'update' && existing && 'ownerId' in existing && incoming.ownerId !== existing.ownerId) {
+      return 'PERMISSION_DENIED';
+    }
     return 'ALLOW';
   }
 
   if (collection === 'leaderboard') {
     if (op === 'get') {
       if (!isSignedIn || !isValidId(docId)) return 'PERMISSION_DENIED';
-      if (existing !== null && (typeof existing.highScore !== 'number' || existing.highScore < 0)) return 'PERMISSION_DENIED';
+      if (existing !== null && 'highScore' in existing && (typeof existing.highScore !== 'number' || existing.highScore < 0)) {
+        return 'PERMISSION_DENIED';
+      }
       return 'ALLOW';
     }
     if (op === 'list') {
@@ -111,9 +115,9 @@ function evaluateRule(params: {
     if (!isVerified || !isValidId(docId) || auth.uid !== docId) return 'PERMISSION_DENIED';
     if (!isValidLeaderboardEntry(incoming, auth)) return 'PERMISSION_DENIED';
     if (op === 'update' && existing) {
-      if (incoming.uid !== existing.uid) return 'PERMISSION_DENIED';
-      if ((incoming.highScore as number) < (existing.highScore as number)) return 'PERMISSION_DENIED';
-      if ((incoming.bestDistance as number) < (existing.bestDistance as number)) return 'PERMISSION_DENIED';
+      if ('uid' in existing && incoming.uid !== existing.uid) return 'PERMISSION_DENIED';
+      if ('highScore' in existing && (incoming.highScore as number) < (existing.highScore as number)) return 'PERMISSION_DENIED';
+      if ('bestDistance' in existing && (incoming.bestDistance as number) < (existing.bestDistance as number)) return 'PERMISSION_DENIED';
     }
     return 'ALLOW';
   }
@@ -393,5 +397,17 @@ test('Dirty Dozen security payloads all return PERMISSION_DENIED and legitimate 
       queryLimit: 100,
     }),
     'PERMISSION_DENIED'
+  );
+  // Legacy document migration update succeeds cleanly
+  assert.equal(
+    evaluateRule({
+      collection: 'saves',
+      op: 'update',
+      docId: 'alice',
+      auth: aliceAuth,
+      incoming: validSavePayload('alice'),
+      existing: {highScore: 100, legacyField: true},
+    }),
+    'ALLOW'
   );
 });
