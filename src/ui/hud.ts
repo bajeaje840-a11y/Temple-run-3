@@ -9,6 +9,12 @@ import {
   SHOP_UPGRADES,
 } from '../game/constants';
 import {
+  ensureDailyMissions,
+  formatDailyProgressValue,
+  getTimeUntilDailyReset,
+  type DailyMissionCompletionReward,
+} from '../game/dailyMissions';
+import {
   canAffordRevive,
   getReviveCost,
   getUpgradeCost,
@@ -17,6 +23,7 @@ import {
   selectOrUnlockCharacter,
 } from '../game/rules';
 import type {HudSnapshot} from '../game/engine';
+import type {LeaderboardEntry} from '../game/cloudMerge';
 import type {
   BiomeId,
   CharacterId,
@@ -26,9 +33,26 @@ import type {
   RunStats,
   SaveData,
 } from '../game/types';
-import {createTitleLockupSvg, svgCoin, svgIcon} from './icons';
+import {createTitleLockupSvg, escapeHtml, svgCoin, svgIcon} from './icons';
 
-export type SubModalType = 'none' | 'characters' | 'shop' | 'missions' | 'settings';
+export type SubModalType =
+  | 'none'
+  | 'characters'
+  | 'shop'
+  | 'missions'
+  | 'leaderboard'
+  | 'settings';
+
+export interface CloudAccountState {
+  signedIn: boolean;
+  displayName: string | null;
+  uid: string | null;
+  syncStatus: 'offline' | 'syncing' | 'synced' | 'error';
+  errorMessage: string | null;
+  leaderboard: LeaderboardEntry[];
+  leaderboardLoading: boolean;
+  leaderboardError: string | null;
+}
 
 export interface HudActions {
   onStartGame: () => void;
@@ -40,16 +64,30 @@ export interface HudActions {
   onReviveRun: () => void;
   onSaveChanged: (nextSave: SaveData) => void;
   onButtonClickSfx: () => void;
+  onSignInGoogle: () => void;
+  onSignOutGoogle: () => void;
+  onRefreshLeaderboard: () => void;
 }
 
 export class TempleUI {
   private gameState: GameState = 'title';
   private activeModal: SubModalType = 'none';
   private save: SaveData;
+  private cloudState: CloudAccountState = {
+    signedIn: false,
+    displayName: null,
+    uid: null,
+    syncStatus: 'offline',
+    errorMessage: null,
+    leaderboard: [],
+    leaderboardLoading: false,
+    leaderboardError: null,
+  };
   private lastRunSummary: {
     stats: RunStats;
     revivesUsed: number;
     newMissions: string[];
+    newDailyMissions: DailyMissionCompletionReward[];
     newAchievements: string[];
     newBiomes: BiomeId[];
   } | null = null;
@@ -60,6 +98,8 @@ export class TempleUI {
 
   private readonly titleBestEl: HTMLElement;
   private readonly titleCoinsEl: HTMLElement;
+  private readonly titleDailyCountEl: HTMLElement;
+  private readonly cloudAccountSlotEl: HTMLElement;
 
   private readonly hudScoreEl: HTMLElement;
   private readonly hudDistanceEl: HTMLElement;
@@ -99,9 +139,12 @@ export class TempleUI {
               <span class="stat-chip-value" data-ref="title-coins">0</span>
             </div>
           </div>
-          <button type="button" class="hud-icon-btn" data-action="toggle-mute" aria-label="Toggle Sound">
-            ${svgIcon('volume', 20)}
-          </button>
+          <div class="title-top-actions">
+            <div class="cloud-account-slot" data-ref="cloud-account-slot"></div>
+            <button type="button" class="hud-icon-btn" data-action="toggle-mute" aria-label="Toggle Sound">
+              ${svgIcon('volume', 20)}
+            </button>
+          </div>
         </div>
 
         <div class="title-main-area">
@@ -123,12 +166,17 @@ export class TempleUI {
               <button type="button" class="btn-temple-secondary" data-action="open-missions">
                 ${svgIcon('mission', 17)}
                 <span>Missions</span>
+                <span class="daily-count-pill" data-ref="title-daily-count" data-testid="daily-badge">0/3</span>
               </button>
               <button type="button" class="btn-temple-secondary" data-action="open-settings">
                 ${svgIcon('settings', 17)}
                 <span>Settings</span>
               </button>
             </div>
+            <button type="button" class="btn-temple-secondary leaderboard-cta-btn" data-action="open-leaderboard" data-testid="open-leaderboard-btn">
+              ${svgIcon('trophy', 17)}
+              <span>Global Leaderboard</span>
+            </button>
           </div>
         </div>
 
@@ -191,6 +239,8 @@ export class TempleUI {
 
     this.titleBestEl = this.rootEl.querySelector('[data-ref="title-best"]')!;
     this.titleCoinsEl = this.rootEl.querySelector('[data-ref="title-coins"]')!;
+    this.titleDailyCountEl = this.rootEl.querySelector('[data-ref="title-daily-count"]')!;
+    this.cloudAccountSlotEl = this.rootEl.querySelector('[data-ref="cloud-account-slot"]')!;
 
     this.hudScoreEl = this.rootEl.querySelector('[data-ref="hud-score"]')!;
     this.hudDistanceEl = this.rootEl.querySelector('[data-ref="hud-distance"]')!;
@@ -210,6 +260,7 @@ export class TempleUI {
 
     this.bindRootEvents();
     this.refreshTitleStats();
+    this.refreshCloudAccountSlot();
     this.syncMuteIcons();
   }
 
@@ -234,8 +285,20 @@ export class TempleUI {
         case 'open-missions':
           this.openSubModal('missions');
           break;
+        case 'open-leaderboard':
+          this.openSubModal('leaderboard');
+          break;
         case 'open-settings':
           this.openSubModal('settings');
+          break;
+        case 'google-signin':
+          this.actions.onSignInGoogle();
+          break;
+        case 'google-signout':
+          this.actions.onSignOutGoogle();
+          break;
+        case 'refresh-leaderboard':
+          this.actions.onRefreshLeaderboard();
           break;
         case 'close-modal':
           this.openSubModal('none');
@@ -353,6 +416,53 @@ export class TempleUI {
     this.syncMuteIcons();
   }
 
+  public setCloudState(next: CloudAccountState): void {
+    this.cloudState = next;
+    this.refreshCloudAccountSlot();
+    if (this.activeModal === 'leaderboard' || this.activeModal === 'settings') {
+      this.renderModal();
+    }
+  }
+
+  private refreshCloudAccountSlot(): void {
+    if (!this.cloudState.signedIn) {
+      this.cloudAccountSlotEl.innerHTML = `
+        <button type="button" class="btn-temple-secondary cloud-signin-btn" data-action="google-signin" data-testid="auth-signin-btn">
+          ${svgIcon('cloud', 16)}
+          <span>Sign In</span>
+        </button>
+      `;
+      return;
+    }
+
+    const name = escapeHtml(this.cloudState.displayName || 'Explorer');
+    const statusText =
+      this.cloudState.syncStatus === 'syncing'
+        ? 'Syncing…'
+        : this.cloudState.syncStatus === 'error'
+          ? 'Sync Error'
+          : 'Cloud Synced';
+    const statusColor =
+      this.cloudState.syncStatus === 'error'
+        ? '#f05a46'
+        : this.cloudState.syncStatus === 'syncing'
+          ? '#ffd95a'
+          : '#2fd69d';
+
+    this.cloudAccountSlotEl.innerHTML = `
+      <div class="account-chip" data-testid="account-chip">
+        <span style="color:${statusColor}; display:flex">${svgIcon('cloud', 16)}</span>
+        <div class="account-chip-meta">
+          <span class="account-name">${name}</span>
+          <span class="account-sync-status" style="color:${statusColor}">${statusText}</span>
+        </div>
+        <button type="button" class="account-signout-btn" data-action="google-signout" aria-label="Sign Out">
+          Sign Out
+        </button>
+      </div>
+    `;
+  }
+
   public setState(state: GameState): void {
     this.gameState = state;
     document.body.dataset.state = state;
@@ -376,7 +486,18 @@ export class TempleUI {
   }
 
   public openSubModal(modal: SubModalType): void {
+    if (modal === 'missions') {
+      const updated = ensureDailyMissions(this.save);
+      if (updated !== this.save) {
+        this.save = updated;
+        this.actions.onSaveChanged(updated);
+        this.refreshTitleStats();
+      }
+    }
     this.activeModal = modal;
+    if (modal === 'leaderboard' && this.cloudState.signedIn) {
+      this.actions.onRefreshLeaderboard();
+    }
     this.renderModal();
   }
 
@@ -388,10 +509,18 @@ export class TempleUI {
     stats: RunStats,
     revivesUsed: number,
     newMissions: string[],
+    newDailyMissions: DailyMissionCompletionReward[],
     newAchievements: string[],
     newBiomes: BiomeId[]
   ): void {
-    this.lastRunSummary = {stats, revivesUsed, newMissions, newAchievements, newBiomes};
+    this.lastRunSummary = {
+      stats,
+      revivesUsed,
+      newMissions,
+      newDailyMissions,
+      newAchievements,
+      newBiomes,
+    };
   }
 
   public showBiomeBanner(biomeId: BiomeId): void {
@@ -481,6 +610,13 @@ export class TempleUI {
   private refreshTitleStats(): void {
     this.titleBestEl.textContent = this.save.highScore.toLocaleString();
     this.titleCoinsEl.textContent = this.save.coins.toLocaleString();
+    const dailyList = this.save.dailyMissions?.missions ?? [];
+    const dailyDone = dailyList.filter((m) => m.completed).length;
+    this.titleDailyCountEl.textContent = `${dailyDone}/${dailyList.length || 3}`;
+    this.titleDailyCountEl.classList.toggle(
+      'complete',
+      dailyList.length > 0 && dailyDone === dailyList.length
+    );
   }
 
   private renderModal(): void {
@@ -506,20 +642,60 @@ export class TempleUI {
     }
 
     if (this.gameState === 'gameover' && this.lastRunSummary) {
-      const {stats, revivesUsed, newMissions, newAchievements, newBiomes} = this.lastRunSummary;
+      const {stats, revivesUsed, newMissions, newDailyMissions, newAchievements, newBiomes} =
+        this.lastRunSummary;
       const reviveCost = getReviveCost(revivesUsed);
       const affordRevive = canAffordRevive(this.save.coins, revivesUsed);
 
+      const totalUnlocks =
+        newMissions.length +
+        newDailyMissions.length +
+        newAchievements.length +
+        newBiomes.length;
       const unlocksHtml =
-        newMissions.length + newAchievements.length + newBiomes.length > 0
+        totalUnlocks > 0
           ? `<div class="stat-tile" style="border-color:#2fd69d">
-              <span class="stat-tile-label" style="color:#2fd69d">New Unlocks &amp; Rewards</span>
+              <span class="stat-tile-label" style="color:#2fd69d">New Unlocks &amp; Bonus Rewards</span>
               <div class="catalog-desc" style="color:#f8f2e2">
                 ${[
+                  ...newDailyMissions.map(
+                    (d) => `Daily: ${d.title} (+${d.rewardCoins} Coins)`
+                  ),
                   ...newMissions.map((m) => `Mission: ${m}`),
                   ...newAchievements.map((a) => `Achievement: ${a}`),
                   ...newBiomes.map((b) => `Biome: ${BIOMES[b].name}`),
                 ].join(' · ')}
+              </div>
+            </div>`
+          : '';
+
+      const dailyList = this.save.dailyMissions?.missions ?? [];
+      const dailySummaryHtml =
+        dailyList.length > 0
+          ? `<div class="daily-gameover-strip" data-testid="gameover-daily-strip">
+              <div class="daily-section-head">
+                <span class="stat-chip-label" style="color:#ffd95a">Daily Challenges</span>
+                <span class="stat-chip-label">${dailyList.filter((m) => m.completed).length}/3 Done</span>
+              </div>
+              <div class="daily-mini-grid">
+                ${dailyList
+                  .map((m) => {
+                    const pct = Math.min(100, Math.round((m.progress / Math.max(1, m.target)) * 100));
+                    return `
+                      <div class="daily-mini-item ${m.completed ? 'done' : ''}">
+                        <div class="daily-mini-top">
+                          <span>${m.title}</span>
+                          <span class="tabular" style="color:${m.completed ? '#2fd69d' : '#ffd95a'}">
+                            ${m.completed ? `+${m.rewardCoins}` : `${formatDailyProgressValue(m.metric, m.progress)}/${formatDailyProgressValue(m.metric, m.target)}`}
+                          </span>
+                        </div>
+                        <div class="daily-progress-track">
+                          <div class="daily-progress-fill" style="transform:scaleX(${pct / 100})"></div>
+                        </div>
+                      </div>
+                    `;
+                  })
+                  .join('')}
               </div>
             </div>`
           : '';
@@ -558,6 +734,7 @@ export class TempleUI {
             </div>
           </div>
           ${unlocksHtml}
+          ${dailySummaryHtml}
           <div class="modal-actions">
             <button type="button" class="btn-temple-secondary" data-action="revive" ${affordRevive ? '' : 'disabled'} style="border-color:#2fd69d; color:#2fd69d">
               ${svgIcon('shield', 18)}
@@ -632,6 +809,36 @@ export class TempleUI {
     }
 
     if (this.activeModal === 'missions') {
+      const dailyList = this.save.dailyMissions?.missions ?? [];
+      const dailyDone = dailyList.filter((m) => m.completed).length;
+      const resetIn = getTimeUntilDailyReset();
+
+      const dailyItems = dailyList
+        .map((m) => {
+          const pct = Math.min(100, Math.round((m.progress / Math.max(1, m.target)) * 100));
+          const progressText = `${formatDailyProgressValue(m.metric, m.progress)} / ${formatDailyProgressValue(m.metric, m.target)}`;
+          return `
+            <div class="catalog-card daily-card ${m.completed ? 'active' : ''}" data-testid="daily-mission-card">
+              <div class="catalog-meta" style="flex:1">
+                <div class="daily-card-top">
+                  <span class="catalog-name">${m.title}</span>
+                  <span class="stat-chip-label" style="color:${m.completed ? '#2fd69d' : '#ffd95a'}">
+                    ${m.completed ? `Completed · +${m.rewardCoins}` : `+${m.rewardCoins} Coins`}
+                  </span>
+                </div>
+                <span class="catalog-desc">${m.description}</span>
+                <div class="daily-progress-row">
+                  <div class="daily-progress-track">
+                    <div class="daily-progress-fill" style="transform:scaleX(${pct / 100})"></div>
+                  </div>
+                  <span class="daily-progress-text tabular">${progressText}</span>
+                </div>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+
       const missionItems = MISSIONS.map((m) => {
         const done = this.save.completedMissions.includes(m.id);
         return `
@@ -663,14 +870,128 @@ export class TempleUI {
       }).join('');
 
       this.modalHostEl.innerHTML = this.wrapModal(
-        'Missions & Achievements',
-        `<div class="catalog-list">${missionItems}${achItems}</div>`
+        'Daily & Career Missions',
+        `
+          <div class="catalog-list">
+            <div class="daily-section-head">
+              <span class="stat-chip-label" style="color:#ffd95a">Daily Challenges (${dailyDone}/3)</span>
+              <span class="stat-chip-label">Resets in ${resetIn}</span>
+            </div>
+            ${dailyItems}
+            <div class="stat-chip-label" style="margin-top:8px">Expedition Milestones</div>
+            ${missionItems}
+            <div class="stat-chip-label" style="margin-top:8px">Achievements</div>
+            ${achItems}
+          </div>
+        `
+      );
+      return;
+    }
+
+    if (this.activeModal === 'leaderboard') {
+      const personalHero = CHARACTERS[this.save.selectedCharacter]?.name ?? 'Aurelia Vance';
+      const personalSummary = `
+        <div class="stat-tile" style="border-color:rgba(255,217,90,0.5)">
+          <span class="stat-chip-label" style="color:#ffd95a">Your Personal Record</span>
+          <div class="leaderboard-personal-row">
+            <span class="catalog-name tabular">${this.save.highScore.toLocaleString()} pts</span>
+            <span class="catalog-desc tabular">${this.save.bestDistance.toLocaleString()} m · ${escapeHtml(personalHero)}</span>
+          </div>
+        </div>
+      `;
+
+      let boardBody = '';
+      if (!this.cloudState.signedIn) {
+        boardBody = `
+          <div class="catalog-card" data-testid="leaderboard-signin-prompt">
+            <div class="catalog-meta">
+              <span class="catalog-name">Cloud Sync &amp; Global Rankings</span>
+              <span class="catalog-desc">Sign in with Google to save your progress in the cloud and post scores to the Global Hall of Explorers.</span>
+            </div>
+            <button type="button" class="btn-temple-secondary" data-action="google-signin">
+              ${svgIcon('cloud', 16)}
+              <span>Sign In</span>
+            </button>
+          </div>
+        `;
+      } else if (this.cloudState.leaderboardLoading) {
+        boardBody = `
+          <div class="catalog-card">
+            <span class="catalog-desc">Loading Global Hall of Explorers…</span>
+          </div>
+        `;
+      } else if (this.cloudState.leaderboardError) {
+        boardBody = `
+          <div class="catalog-card" style="border-color:#f05a46">
+            <div class="catalog-meta">
+              <span class="catalog-name" style="color:#f05a46">Could not load rankings</span>
+              <span class="catalog-desc">${escapeHtml(this.cloudState.leaderboardError)}</span>
+            </div>
+            <button type="button" class="btn-temple-secondary" data-action="refresh-leaderboard">Retry</button>
+          </div>
+        `;
+      } else if (this.cloudState.leaderboard.length === 0) {
+        boardBody = `
+          <div class="catalog-card">
+            <div class="catalog-meta">
+              <span class="catalog-name">No scores recorded yet</span>
+              <span class="catalog-desc">Complete an expedition while signed in to claim Rank #1!</span>
+            </div>
+            <button type="button" class="btn-temple-secondary" data-action="refresh-leaderboard">Refresh</button>
+          </div>
+        `;
+      } else {
+        const rowsHtml = this.cloudState.leaderboard
+          .map((entry, idx) => {
+            const isSelf = entry.uid === this.cloudState.uid;
+            const heroName = CHARACTERS[entry.selectedCharacter]?.name ?? 'Aurelia Vance';
+            return `
+              <div class="catalog-card leaderboard-row ${isSelf ? 'active' : ''}">
+                <div class="leaderboard-rank tabular">#${idx + 1}</div>
+                <div class="catalog-meta" style="flex:1">
+                  <span class="catalog-name">${escapeHtml(entry.displayName)}${isSelf ? ' (You)' : ''}</span>
+                  <span class="catalog-desc">${escapeHtml(heroName)} · ${entry.bestDistance.toLocaleString()} m</span>
+                </div>
+                <span class="stat-chip-value tabular" style="font-size:16px">${entry.highScore.toLocaleString()}</span>
+              </div>
+            `;
+          })
+          .join('');
+        boardBody = `
+          <div class="daily-section-head">
+            <span class="stat-chip-label" style="color:#ffd95a">Top Explorers</span>
+            <button type="button" class="account-signout-btn" data-action="refresh-leaderboard">Refresh</button>
+          </div>
+          ${rowsHtml}
+        `;
+      }
+
+      this.modalHostEl.innerHTML = this.wrapModal(
+        'Hall of Explorers',
+        `<div class="catalog-list">${personalSummary}${boardBody}</div>`
       );
       return;
     }
 
     if (this.activeModal === 'settings') {
       const q = this.save.settings.quality;
+      const cloudStatusCopy = this.cloudState.signedIn
+        ? `Signed in as ${escapeHtml(this.cloudState.displayName || 'Explorer')} (${this.cloudState.syncStatus})`
+        : 'Playing locally (guest mode). Sign in to sync progress across devices.';
+      const cloudRow = `
+        <div class="settings-row">
+          <div class="catalog-meta">
+            <span class="catalog-name">Cloud Save (Firebase)</span>
+            <span class="catalog-desc">${cloudStatusCopy}${this.cloudState.errorMessage ? ` · ${escapeHtml(this.cloudState.errorMessage)}` : ''}</span>
+          </div>
+          ${
+            this.cloudState.signedIn
+              ? `<button type="button" class="btn-temple-secondary" data-action="google-signout">Sign Out</button>`
+              : `<button type="button" class="btn-temple-secondary" data-action="google-signin">${svgIcon('cloud', 16)}<span>Sign In</span></button>`
+          }
+        </div>
+      `;
+
       const biomeButtons = BIOME_ORDER.map((bId) => {
         const b = BIOMES[bId];
         const unlocked = this.save.unlockedBiomes.includes(bId);
@@ -694,6 +1015,7 @@ export class TempleUI {
         'Settings & Biomes',
         `
           <div class="catalog-list">
+            ${cloudRow}
             <div class="settings-row">
               <span class="catalog-name">Graphics Quality</span>
               <div class="segmented-group">

@@ -16,6 +16,12 @@ import {
   selectOrUnlockCharacter,
 } from './rules';
 import {createDefaultSaveData, LANE_POSITIONS} from './constants';
+import {
+  createDailyMissionsState,
+  ensureDailyMissions,
+  formatDailyProgressValue,
+  generateDailyMissions,
+} from './dailyMissions';
 
 test('first two segments are safe warm-up runways with coins', () => {
   const seg0 = generateSegmentPattern(0, 'jungle_temple', seededRandom(11));
@@ -141,6 +147,7 @@ test('speed, biome progression, combo, revive, and shop/character progression wo
     score: 6200,
     distance: 520,
     coins: 45,
+    survivalSeconds: 48,
     multiplier: 1,
     powerUpsCollected: 2,
     jumps: 16,
@@ -153,4 +160,219 @@ test('speed, biome progression, combo, revive, and shop/character progression wo
   assert.equal(afterRun.nextSave.bestDistance, 520);
   assert.ok(afterRun.newlyCompletedMissions.length >= 3);
   assert.ok(afterRun.newlyUnlockedAchievements.length >= 2);
+});
+
+test('daily mission system generates 3 randomized distinct-metric challenges, awards bonus currency once, and resets on a new day', () => {
+  const day1 = generateDailyMissions('2026-11-13');
+  const day2 = generateDailyMissions('2026-11-14');
+  assert.equal(day1.length, 3);
+  assert.equal(day2.length, 3);
+
+  // All 3 daily missions on a day must have distinct metrics
+  assert.equal(new Set(day1.map((m) => m.metric)).size, 3);
+  assert.equal(new Set(day2.map((m) => m.metric)).size, 3);
+
+  // Deterministic for same date, varied across different dates
+  assert.deepEqual(
+    day1.map((m) => m.id),
+    generateDailyMissions('2026-11-13').map((m) => m.id)
+  );
+  assert.notDeepEqual(
+    day1.map((m) => m.id),
+    day2.map((m) => m.id)
+  );
+
+  // Explicit test with known coin + survival challenges matching prompt examples
+  const baseSave = {
+    ...createDefaultSaveData(),
+    coins: 100,
+    dailyMissions: {
+      dateKey: '2026-11-13',
+      missions: [
+        {
+          id: 'dm_coins_500',
+          title: 'Collect 500 coins',
+          description: 'Gather 500 coins across expeditions today.',
+          metric: 'coins' as const,
+          target: 500,
+          rewardCoins: 250,
+          progress: 0,
+          completed: false,
+        },
+        {
+          id: 'dm_survive_120',
+          title: 'Survive for 2 minutes',
+          description: 'Stay alive for 2 minutes total in runs today.',
+          metric: 'survivalSeconds' as const,
+          target: 120,
+          rewardCoins: 240,
+          progress: 0,
+          completed: false,
+        },
+        {
+          id: 'dm_jumps_30',
+          title: 'Jump 30 times',
+          description: 'Leap over 30 hazards today.',
+          metric: 'jumps' as const,
+          target: 30,
+          rewardCoins: 170,
+          progress: 0,
+          completed: false,
+        },
+      ],
+    },
+  };
+
+  // Run 1: partial progress (300 coins, 90s survival, 30 jumps -> completes Jumps)
+  const run1 = applyRunToSave(
+    baseSave,
+    {
+      score: 1200,
+      distance: 180,
+      coins: 300,
+      survivalSeconds: 90,
+      multiplier: 1,
+      powerUpsCollected: 0,
+      jumps: 30,
+      slides: 0,
+      closeCalls: 0,
+      maxCombo: 5,
+      currentBiome: 'jungle_temple',
+    },
+    '2026-11-13'
+  );
+  assert.equal(run1.newlyCompletedDailyMissions.length, 1);
+  assert.equal(run1.newlyCompletedDailyMissions[0].id, 'dm_jumps_30');
+  assert.equal(run1.nextSave.dailyMissions.missions[0].progress, 300);
+  assert.equal(run1.nextSave.dailyMissions.missions[1].progress, 90);
+  assert.equal(run1.nextSave.dailyMissions.missions[2].completed, true);
+  // 100 starting + 300 run coins + 170 daily bonus + career mission bonuses (coins/jumps)
+  assert.ok(run1.nextSave.coins >= 100 + 300 + 170);
+
+  const coinsBeforeRun2 = run1.nextSave.coins;
+  // Run 2: finishes both remaining daily challenges, does NOT re-award Jumps bonus
+  const run2 = applyRunToSave(
+    run1.nextSave,
+    {
+      score: 1500,
+      distance: 150,
+      coins: 250,
+      survivalSeconds: 45,
+      multiplier: 1,
+      powerUpsCollected: 0,
+      jumps: 10,
+      slides: 0,
+      closeCalls: 0,
+      maxCombo: 4,
+      currentBiome: 'jungle_temple',
+    },
+    '2026-11-13'
+  );
+  assert.equal(run2.newlyCompletedDailyMissions.length, 2);
+  assert.equal(run2.nextSave.dailyMissions.missions[0].progress, 500);
+  assert.equal(run2.nextSave.dailyMissions.missions[0].completed, true);
+  assert.equal(run2.nextSave.dailyMissions.missions[1].progress, 120);
+  assert.equal(run2.nextSave.dailyMissions.missions[1].completed, true);
+  assert.ok(run2.nextSave.coins >= coinsBeforeRun2 + 250 + 250 + 240);
+
+  // Run 3 on same day awards 0 additional daily bonuses
+  const coinsBeforeRun3 = run2.nextSave.coins;
+  const run3 = applyRunToSave(
+    run2.nextSave,
+    {
+      score: 100,
+      distance: 20,
+      coins: 10,
+      survivalSeconds: 5,
+      multiplier: 1,
+      powerUpsCollected: 0,
+      jumps: 1,
+      slides: 0,
+      closeCalls: 0,
+      maxCombo: 1,
+      currentBiome: 'jungle_temple',
+    },
+    '2026-11-13'
+  );
+  assert.equal(run3.newlyCompletedDailyMissions.length, 0);
+  assert.equal(run3.nextSave.coins, coinsBeforeRun3 + 10);
+
+  // Next calendar day rolls over cleanly to 3 fresh uncompleted challenges
+  const nextDay = ensureDailyMissions(run3.nextSave, '2026-11-14');
+  assert.equal(nextDay.dailyMissions.dateKey, '2026-11-14');
+  assert.equal(nextDay.dailyMissions.missions.length, 3);
+  assert.ok(nextDay.dailyMissions.missions.every((m) => !m.completed && m.progress === 0));
+
+  assert.equal(formatDailyProgressValue('survivalSeconds', 120), '2m 00s');
+  assert.equal(formatDailyProgressValue('survivalSeconds', 45), '45s');
+  assert.equal(createDailyMissionsState('2026-11-15').missions.length, 3);
+});
+
+import {getLocalDateKey} from './dailyMissions';
+import {mergeCloudAndLocalSave, sanitizeDisplayName} from './cloudMerge';
+
+test('cloud and local save merge preserves highest progress, unions unlocks, and sanitizes display names', () => {
+  const todayKey = getLocalDateKey();
+  const baseDaily = generateDailyMissions(todayKey);
+  const local = {
+    ...createDefaultSaveData(),
+    highScore: 4200,
+    bestDistance: 310,
+    coins: 120,
+    unlockedCharacters: ['aurelia' as const],
+    unlockedBiomes: ['jungle_temple' as const],
+    upgradeLevels: {
+      magnet: 3,
+      shield: 1,
+      multiplier: 1,
+      boost: 1,
+      invincibility: 1,
+    },
+    completedMissions: ['m_dist_200'],
+    dailyMissions: {
+      dateKey: todayKey,
+      missions: baseDaily.map((m, idx) =>
+        idx === 0 ? {...m, progress: Math.min(m.target, 10), completed: false} : m
+      ),
+    },
+  };
+
+  const cloud = {
+    highScore: 8900,
+    bestDistance: 640,
+    coins: 480,
+    unlockedCharacters: ['aurelia' as const, 'cross' as const],
+    unlockedBiomes: ['jungle_temple' as const, 'suspended_bridges' as const],
+    upgradeLevels: {
+      magnet: 2,
+      shield: 4,
+      multiplier: 1,
+      boost: 1,
+      invincibility: 1,
+    },
+    completedMissions: ['m_score_5000'],
+    unlockedAchievements: ['a_first_run'],
+    dailyMissions: {
+      dateKey: todayKey,
+      missions: baseDaily.map((m, idx) =>
+        idx === 0 ? {...m, progress: m.target, completed: true} : m
+      ),
+    },
+  };
+
+  const merged = mergeCloudAndLocalSave(local, cloud);
+  assert.equal(merged.highScore, 8900);
+  assert.equal(merged.bestDistance, 640);
+  assert.equal(merged.coins, 480);
+  assert.equal(merged.upgradeLevels.magnet, 3);
+  assert.equal(merged.upgradeLevels.shield, 4);
+  assert.deepEqual(merged.unlockedCharacters.sort(), ['aurelia', 'cross']);
+  assert.deepEqual(merged.unlockedBiomes.sort(), ['jungle_temple', 'suspended_bridges']);
+  assert.deepEqual(merged.completedMissions.sort(), ['m_dist_200', 'm_score_5000']);
+  assert.deepEqual(merged.unlockedAchievements, ['a_first_run']);
+  assert.equal(merged.dailyMissions.missions[0].completed, true);
+  assert.equal(merged.dailyMissions.missions[0].progress, baseDaily[0].target);
+
+  assert.equal(sanitizeDisplayName('   '), 'Temple Explorer');
+  assert.equal(sanitizeDisplayName('A'.repeat(64)).length, 48);
 });

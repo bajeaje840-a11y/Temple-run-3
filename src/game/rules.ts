@@ -11,6 +11,11 @@ import {
   SEGMENT_LENGTH,
   SHOP_UPGRADES,
 } from './constants';
+import {
+  applyRunToDailyMissions,
+  getLocalDateKey,
+  type DailyMissionCompletionReward,
+} from './dailyMissions';
 import type {
   BiomeId,
   CharacterId,
@@ -349,9 +354,14 @@ export function evaluateObstacleHit(
   }
 }
 
-export function applyRunToSave(save: SaveData, run: RunStats): {
+export function applyRunToSave(
+  save: SaveData,
+  run: RunStats,
+  dateKey: string = getLocalDateKey()
+): {
   nextSave: SaveData;
   newlyCompletedMissions: string[];
+  newlyCompletedDailyMissions: DailyMissionCompletionReward[];
   newlyUnlockedAchievements: string[];
   newlyUnlockedBiomes: BiomeId[];
 } {
@@ -362,6 +372,7 @@ export function applyRunToSave(save: SaveData, run: RunStats): {
     unlockedBiomes: [...save.unlockedBiomes],
     completedMissions: [...save.completedMissions],
     unlockedAchievements: [...save.unlockedAchievements],
+    dailyMissions: save.dailyMissions,
     settings: {...save.settings},
   };
 
@@ -436,9 +447,15 @@ export function applyRunToSave(save: SaveData, run: RunStats): {
     }
   }
 
+  // Evaluate daily challenges and grant bonus currency upon completion
+  const dailyResult = applyRunToDailyMissions(next.dailyMissions, run, dateKey);
+  next.dailyMissions = dailyResult.nextState;
+  next.coins += dailyResult.bonusCoinsEarned;
+
   return {
     nextSave: next,
     newlyCompletedMissions,
+    newlyCompletedDailyMissions: dailyResult.newlyCompleted,
     newlyUnlockedAchievements,
     newlyUnlockedBiomes,
   };

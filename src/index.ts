@@ -1,9 +1,29 @@
+import type {User} from 'firebase/auth';
+import {signInWithGoogle, signOutExplorer, subscribeToAuth} from './firebase';
 import {TempleAudio} from './game/audio';
+import {mergeCloudAndLocalSave} from './game/cloudMerge';
+import {
+  fetchTopLeaderboard,
+  loadCloudSave,
+  persistCloudSave,
+  sanitizeDisplayName,
+  upsertLeaderboardEntry,
+} from './game/cloudSync';
+import {ensureDailyMissions} from './game/dailyMissions';
 import {TempleRunEngine} from './game/engine';
 import {applyRunToSave, canAffordRevive, getReviveCost} from './game/rules';
 import {loadSaveData, persistSaveData} from './game/storage';
 import type {GameState, RunStats, SaveData} from './game/types';
-import {TempleUI} from './ui/hud';
+import {TempleUI, type CloudAccountState} from './ui/hud';
+
+function formatCloudErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes('popup-closed-by-user')) return 'Sign-in cancelled.';
+  if (msg.includes('permission') || msg.includes('PERMISSION_DENIED')) {
+    return 'Permission error while syncing cloud data.';
+  }
+  return 'Could not reach Firebase right now.';
+}
 
 function bootstrap(): void {
   const mountEl = document.getElementById('game-canvas-mount');
@@ -13,6 +33,17 @@ function bootstrap(): void {
   let saveData: SaveData = loadSaveData();
   let currentState: GameState = 'title';
   let lastCommittedRunStats: RunStats | null = null;
+  let currentUser: User | null = null;
+  let cloudState: CloudAccountState = {
+    signedIn: false,
+    displayName: null,
+    uid: null,
+    syncStatus: 'offline',
+    errorMessage: null,
+    leaderboard: [],
+    leaderboardLoading: false,
+    leaderboardError: null,
+  };
 
   const audio = new TempleAudio();
   audio.applySettings(
@@ -24,6 +55,47 @@ function bootstrap(): void {
   let engine: TempleRunEngine;
   let ui: TempleUI;
 
+  const updateCloudState = (patch: Partial<CloudAccountState>) => {
+    cloudState = {...cloudState, ...patch};
+    ui.setCloudState(cloudState);
+  };
+
+  const syncCloudProgress = async (updateLeaderboard: boolean) => {
+    const user = currentUser;
+    if (!user || !user.emailVerified) return;
+    updateCloudState({syncStatus: 'syncing', errorMessage: null});
+    try {
+      await persistCloudSave(user, saveData);
+      if (updateLeaderboard && saveData.highScore > 0) {
+        await upsertLeaderboardEntry(user, saveData);
+      }
+      updateCloudState({syncStatus: 'synced', errorMessage: null});
+    } catch (err) {
+      updateCloudState({
+        syncStatus: 'error',
+        errorMessage: formatCloudErrorMessage(err),
+      });
+    }
+  };
+
+  const refreshLeaderboard = async () => {
+    if (!currentUser) return;
+    updateCloudState({leaderboardLoading: true, leaderboardError: null});
+    try {
+      const entries = await fetchTopLeaderboard(20);
+      updateCloudState({
+        leaderboard: entries,
+        leaderboardLoading: false,
+        leaderboardError: null,
+      });
+    } catch (err) {
+      updateCloudState({
+        leaderboardLoading: false,
+        leaderboardError: formatCloudErrorMessage(err),
+      });
+    }
+  };
+
   const setState = (next: GameState) => {
     currentState = next;
     engine.setState(next);
@@ -34,6 +106,14 @@ function bootstrap(): void {
     audio.unlock();
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
+    }
+    const rolledSave = ensureDailyMissions(saveData);
+    if (rolledSave !== saveData) {
+      saveData = rolledSave;
+      persistSaveData(saveData);
+      engine.syncSaveData(saveData);
+      ui.syncSave(saveData);
+      void syncCloudProgress(false);
     }
     lastCommittedRunStats = null;
     currentState = 'playing';
@@ -78,6 +158,7 @@ function bootstrap(): void {
       persistSaveData(saveData);
       engine.syncSaveData(saveData);
       ui.syncSave(saveData);
+      void syncCloudProgress(false);
       currentState = 'playing';
       ui.setState('playing');
       engine.reviveCurrentRun();
@@ -91,9 +172,29 @@ function bootstrap(): void {
         saveData.settings.muted
       );
       engine.syncSaveData(saveData);
+      void syncCloudProgress(false);
     },
     onButtonClickSfx: () => {
       audio.playClick();
+    },
+    onSignInGoogle: () => {
+      void (async () => {
+        try {
+          updateCloudState({syncStatus: 'syncing', errorMessage: null});
+          await signInWithGoogle();
+        } catch (err) {
+          updateCloudState({
+            syncStatus: currentUser ? 'error' : 'offline',
+            errorMessage: formatCloudErrorMessage(err),
+          });
+        }
+      })();
+    },
+    onSignOutGoogle: () => {
+      void signOutExplorer();
+    },
+    onRefreshLeaderboard: () => {
+      void refreshLeaderboard();
     },
   });
 
@@ -115,6 +216,7 @@ function bootstrap(): void {
             ...stats,
             distance: Math.max(0, stats.distance - prev.distance),
             coins: Math.max(0, stats.coins - prev.coins),
+            survivalSeconds: Math.max(0, stats.survivalSeconds - prev.survivalSeconds),
             powerUpsCollected: Math.max(0, stats.powerUpsCollected - prev.powerUpsCollected),
             jumps: Math.max(0, stats.jumps - prev.jumps),
             slides: Math.max(0, stats.slides - prev.slides),
@@ -136,10 +238,12 @@ function bootstrap(): void {
       persistSaveData(saveData);
       engine.syncSaveData(saveData);
       ui.syncSave(saveData);
+      void syncCloudProgress(true);
       ui.setGameOverSummary(
         stats,
         engine.getRevivesUsed(),
         result.newlyCompletedMissions,
+        result.newlyCompletedDailyMissions,
         result.newlyUnlockedAchievements,
         result.newlyUnlockedBiomes
       );
@@ -155,6 +259,57 @@ function bootstrap(): void {
     onMuteToggle: () => {
       ui.toggleMute();
     },
+  });
+
+  const unsubscribeAuth = subscribeToAuth((user) => {
+    currentUser = user;
+    if (!user) {
+      updateCloudState({
+        signedIn: false,
+        displayName: null,
+        uid: null,
+        syncStatus: 'offline',
+        errorMessage: null,
+        leaderboard: [],
+        leaderboardLoading: false,
+        leaderboardError: null,
+      });
+      return;
+    }
+
+    updateCloudState({
+      signedIn: true,
+      displayName: sanitizeDisplayName(user.displayName),
+      uid: user.uid,
+      syncStatus: 'syncing',
+      errorMessage: null,
+    });
+
+    void (async () => {
+      try {
+        const cloudSave = await loadCloudSave(user);
+        if (cloudSave) {
+          saveData = mergeCloudAndLocalSave(saveData, cloudSave);
+          persistSaveData(saveData);
+          audio.applySettings(
+            saveData.settings.musicVolume,
+            saveData.settings.sfxVolume,
+            saveData.settings.muted
+          );
+          engine.syncSaveData(saveData);
+          ui.syncSave(saveData);
+        }
+        await syncCloudProgress(true);
+        if (ui.getActiveSubModal() === 'leaderboard') {
+          await refreshLeaderboard();
+        }
+      } catch (err) {
+        updateCloudState({
+          syncStatus: 'error',
+          errorMessage: formatCloudErrorMessage(err),
+        });
+      }
+    })();
   });
 
   // Title/GameOver Enter & Space start handshake
@@ -178,6 +333,7 @@ function bootstrap(): void {
   }
 
   window.addEventListener('beforeunload', () => {
+    unsubscribeAuth();
     engine.dispose();
     audio.dispose();
   });

@@ -77,7 +77,9 @@ export function svgIcon(
     | 'multiplier'
     | 'boost'
     | 'invincibility'
-    | 'close',
+    | 'close'
+    | 'trophy'
+    | 'cloud',
   size = 20
 ): string {
   const paths: Record<typeof name, string> = {
@@ -107,7 +109,20 @@ export function svgIcon(
       '<circle cx="12" cy="12" r="5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
     close:
       '<path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>',
+    trophy:
+      '<path d="M6 4h12v4a6 6 0 0 1-12 0V4z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 6H3.5a1.5 1.5 0 0 0-1.5 1.5v1A3.5 3.5 0 0 0 5.5 12H6M18 6h2.5A1.5 1.5 0 0 1 22 7.5v1a3.5 3.5 0 0 1-3.5 3.5H18" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 14v4M8.5 20h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+    cloud:
+      '<path d="M7 18h10a4 4 0 0 0 .8-7.92A5.5 5.5 0 0 0 7.2 8.6 4.2 4.2 0 0 0 7 18z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
   };
 
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" aria-hidden="true">${paths[name]}</svg>`;
+}
+
+export function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

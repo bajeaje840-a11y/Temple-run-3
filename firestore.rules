@@ -1,0 +1,241 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Global Hardened Primitives
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isNonNegInt(val, maxVal) {
+      return val is int && val >= 0 && val <= maxVal;
+    }
+
+    function isValidHeroId(val) {
+      return val is string && val.size() >= 1 && val.size() <= 32
+        && val in ['aurelia', 'cross', 'kael', 'solara'];
+    }
+
+    function isValidBiomeId(val) {
+      return val is string && val.size() >= 1 && val.size() <= 32
+        && val in [
+          'jungle_temple',
+          'suspended_bridges',
+          'underground_ruins',
+          'mountain_cliff',
+          'lava_temple',
+          'golden_kingdom'
+        ];
+    }
+
+    function isValidDailyMetric(val) {
+      return val is string && val.size() >= 1 && val.size() <= 32
+        && val in [
+          'coins',
+          'survivalSeconds',
+          'distance',
+          'score',
+          'jumps',
+          'slides',
+          'powerups',
+          'closeCalls'
+        ];
+    }
+
+    function isValidUpgradeLevels(levels) {
+      return levels is map
+        && levels.keys().hasAll(['magnet', 'shield', 'multiplier', 'boost', 'invincibility'])
+        && levels.keys().hasOnly(['magnet', 'shield', 'multiplier', 'boost', 'invincibility'])
+        && levels.magnet is int && levels.magnet >= 1 && levels.magnet <= 5
+        && levels.shield is int && levels.shield >= 1 && levels.shield <= 5
+        && levels.multiplier is int && levels.multiplier >= 1 && levels.multiplier <= 5
+        && levels.boost is int && levels.boost >= 1 && levels.boost <= 5
+        && levels.invincibility is int && levels.invincibility >= 1 && levels.invincibility <= 5;
+    }
+
+    function isValidSettings(settings) {
+      return settings is map
+        && settings.keys().hasAll(['quality', 'musicVolume', 'sfxVolume', 'muted'])
+        && settings.keys().hasOnly(['quality', 'musicVolume', 'sfxVolume', 'muted'])
+        && settings.quality is string && settings.quality.size() >= 1 && settings.quality.size() <= 16
+        && settings.quality in ['low', 'medium', 'high']
+        && settings.musicVolume is number && settings.musicVolume >= 0 && settings.musicVolume <= 1
+        && settings.sfxVolume is number && settings.sfxVolume >= 0 && settings.sfxVolume <= 1
+        && settings.muted is bool;
+    }
+
+    function isValidDailyMissionEntry(entry) {
+      return entry is map
+        && entry.keys().hasAll(['id', 'title', 'description', 'metric', 'target', 'rewardCoins', 'progress', 'completed'])
+        && entry.keys().hasOnly(['id', 'title', 'description', 'metric', 'target', 'rewardCoins', 'progress', 'completed'])
+        && entry.id is string && entry.id.size() >= 1 && entry.id.size() <= 48
+        && entry.title is string && entry.title.size() >= 1 && entry.title.size() <= 80
+        && entry.description is string && entry.description.size() >= 1 && entry.description.size() <= 180
+        && isValidDailyMetric(entry.metric)
+        && entry.target is int && entry.target >= 1 && entry.target <= 1000000
+        && entry.rewardCoins is int && entry.rewardCoins >= 0 && entry.rewardCoins <= 100000
+        && entry.progress is int && entry.progress >= 0 && entry.progress <= 1000000
+        && entry.completed is bool;
+    }
+
+    function isValidDailyMissions(daily) {
+      return daily is map
+        && daily.keys().hasAll(['dateKey', 'missions'])
+        && daily.keys().hasOnly(['dateKey', 'missions'])
+        && daily.dateKey is string && daily.dateKey.size() <= 20
+        && daily.missions is list
+        && daily.missions.size() <= 5
+        && (daily.missions.size() == 0 || isValidDailyMissionEntry(daily.missions[0]));
+    }
+
+    function isValidStringList(listVal, maxLen) {
+      return listVal is list
+        && listVal.size() <= maxLen
+        && (listVal.size() == 0 || (listVal[0] is string && listVal[0].size() >= 1 && listVal[0].size() <= 48));
+    }
+
+    function isValidServerTimestamp(ts) {
+      return ts is timestamp
+        && ts >= request.time - duration.value(10, 's')
+        && ts <= request.time + duration.value(10, 's');
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidPlayerSave(data) {
+      return data.keys().hasAll([
+          'ownerId', 'version', 'highScore', 'bestDistance', 'coins',
+          'totalCoinsCollected', 'totalDistance', 'totalJumps', 'totalSlides',
+          'totalPowerUps', 'runsPlayed', 'selectedCharacter', 'unlockedCharacters',
+          'selectedStartBiome', 'unlockedBiomes', 'upgradeLevels',
+          'completedMissions', 'unlockedAchievements', 'dailyMissions',
+          'settings', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'version', 'highScore', 'bestDistance', 'coins',
+          'totalCoinsCollected', 'totalDistance', 'totalJumps', 'totalSlides',
+          'totalPowerUps', 'runsPlayed', 'selectedCharacter', 'unlockedCharacters',
+          'selectedStartBiome', 'unlockedBiomes', 'upgradeLevels',
+          'completedMissions', 'unlockedAchievements', 'dailyMissions',
+          'settings', 'updatedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.ownerId == request.auth.uid
+        && data.version is int && data.version >= 1 && data.version <= 100
+        && isNonNegInt(data.highScore, 1000000000)
+        && isNonNegInt(data.bestDistance, 100000000)
+        && isNonNegInt(data.coins, 100000000)
+        && isNonNegInt(data.totalCoinsCollected, 1000000000)
+        && isNonNegInt(data.totalDistance, 1000000000)
+        && isNonNegInt(data.totalJumps, 100000000)
+        && isNonNegInt(data.totalSlides, 100000000)
+        && isNonNegInt(data.totalPowerUps, 100000000)
+        && isNonNegInt(data.runsPlayed, 10000000)
+        && isValidHeroId(data.selectedCharacter)
+        && data.unlockedCharacters is list
+        && data.unlockedCharacters.size() >= 1
+        && data.unlockedCharacters.size() <= 10
+        && data.unlockedCharacters[0] is string
+        && data.unlockedCharacters[0].size() >= 1
+        && data.unlockedCharacters[0].size() <= 32
+        && isValidBiomeId(data.selectedStartBiome)
+        && data.unlockedBiomes is list
+        && data.unlockedBiomes.size() >= 1
+        && data.unlockedBiomes.size() <= 10
+        && data.unlockedBiomes[0] is string
+        && data.unlockedBiomes[0].size() >= 1
+        && data.unlockedBiomes[0].size() <= 32
+        && isValidUpgradeLevels(data.upgradeLevels)
+        && isValidStringList(data.completedMissions, 30)
+        && isValidStringList(data.unlockedAchievements, 30)
+        && isValidDailyMissions(data.dailyMissions)
+        && isValidSettings(data.settings)
+        && isValidServerTimestamp(data.updatedAt);
+    }
+
+    function isValidLeaderboardEntry(data) {
+      return data.keys().hasAll([
+          'uid', 'displayName', 'selectedCharacter', 'highScore', 'bestDistance', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'selectedCharacter', 'highScore', 'bestDistance', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 48
+        && isValidHeroId(data.selectedCharacter)
+        && isNonNegInt(data.highScore, 1000000000)
+        && isNonNegInt(data.bestDistance, 100000000)
+        && isValidServerTimestamp(data.updatedAt);
+    }
+
+    // 4. Collection Rules
+    match /saves/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidPlayerSave(incoming());
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidPlayerSave(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'version', 'highScore', 'bestDistance', 'coins',
+          'totalCoinsCollected', 'totalDistance', 'totalJumps', 'totalSlides',
+          'totalPowerUps', 'runsPlayed', 'selectedCharacter', 'unlockedCharacters',
+          'selectedStartBiome', 'unlockedBiomes', 'upgradeLevels',
+          'completedMissions', 'unlockedAchievements', 'dailyMissions',
+          'settings', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    match /leaderboard/{userId} {
+      allow get: if isSignedIn()
+        && isValidId(userId)
+        && (resource == null || existing().highScore >= 0);
+      allow list: if isSignedIn()
+        && existing().highScore >= 0
+        && request.query.limit <= 50;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidLeaderboardEntry(incoming());
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidLeaderboardEntry(incoming())
+        && incoming().uid == existing().uid
+        && incoming().highScore >= existing().highScore
+        && incoming().bestDistance >= existing().bestDistance
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'selectedCharacter', 'highScore', 'bestDistance', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(userId) && request.auth.uid == userId;
+    }
+  }
+}

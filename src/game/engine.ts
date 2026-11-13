@@ -135,6 +135,7 @@ export class TempleRunEngine {
   private runDistance = 0;
   private runScore = 0;
   private runCoins = 0;
+  private runSurvivalSeconds = 0;
   private runPowerUps = 0;
   private runJumps = 0;
   private runSlides = 0;
@@ -426,6 +427,7 @@ export class TempleRunEngine {
     this.runDistance = 0;
     this.runScore = 0;
     this.runCoins = 0;
+    this.runSurvivalSeconds = 0;
     this.runPowerUps = 0;
     this.runJumps = 0;
     this.runSlides = 0;
@@ -814,6 +816,7 @@ export class TempleRunEngine {
           score: Math.floor(this.runScore),
           distance: Math.floor(this.runDistance),
           coins: this.runCoins,
+          survivalSeconds: this.runSurvivalSeconds,
           multiplier: totalMult,
           powerUpsCollected: this.runPowerUps,
           jumps: this.runJumps,
@@ -854,6 +857,7 @@ export class TempleRunEngine {
     const dz = speed * dt;
     this.localZ += dz;
     this.runDistance += dz;
+    this.runSurvivalSeconds += dt;
     this.runScore += computeScoreDelta(dz, totalMult, Math.min(1, this.runDistance / 1500));
 
     // Smooth lateral lane movement

@@ -101,6 +101,35 @@ export interface AchievementDef {
   rewardCoins: number;
 }
 
+export type DailyMissionMetric =
+  | 'coins'
+  | 'survivalSeconds'
+  | 'distance'
+  | 'score'
+  | 'jumps'
+  | 'slides'
+  | 'powerups'
+  | 'closeCalls';
+
+export interface DailyMissionTemplate {
+  id: string;
+  title: string;
+  description: string;
+  metric: DailyMissionMetric;
+  target: number;
+  rewardCoins: number;
+}
+
+export interface DailyMissionItem extends DailyMissionTemplate {
+  progress: number;
+  completed: boolean;
+}
+
+export interface DailyMissionsState {
+  dateKey: string;
+  missions: DailyMissionItem[];
+}
+
 export interface SaveData {
   version: number;
   highScore: number;
@@ -119,6 +148,7 @@ export interface SaveData {
   upgradeLevels: Record<PowerUpType, number>;
   completedMissions: string[];
   unlockedAchievements: string[];
+  dailyMissions: DailyMissionsState;
   settings: {
     quality: QualityLevel;
     musicVolume: number;
@@ -179,6 +209,7 @@ export interface RunStats {
   score: number;
   distance: number;
   coins: number;
+  survivalSeconds: number;
   multiplier: number;
   powerUpsCollected: number;
   jumps: number;

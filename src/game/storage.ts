@@ -1,4 +1,5 @@
 import {createDefaultSaveData} from './constants';
+import {ensureDailyMissions} from './dailyMissions';
 import type {SaveData} from './types';
 
 const STORAGE_KEY = 'temple_run_3_lost_kingdom_save_v1';
@@ -7,9 +8,9 @@ export function loadSaveData(): SaveData {
   const defaults = createDefaultSaveData();
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaults;
+    if (!raw) return ensureDailyMissions(defaults);
     const parsed = JSON.parse(raw) as Partial<SaveData>;
-    return {
+    const merged: SaveData = {
       ...defaults,
       ...parsed,
       upgradeLevels: {
@@ -35,8 +36,9 @@ export function loadSaveData(): SaveData {
         ? parsed.unlockedAchievements
         : defaults.unlockedAchievements,
     };
+    return ensureDailyMissions(merged);
   } catch {
-    return defaults;
+    return ensureDailyMissions(defaults);
   }
 }
 

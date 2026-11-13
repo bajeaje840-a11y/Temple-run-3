@@ -1,0 +1,193 @@
+{
+  "entities": {
+    "PlayerSave": {
+      "title": "PlayerSave",
+      "description": "Cloud-persisted progression, inventory, settings, and daily missions for an authenticated explorer.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the save owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "version": {
+          "type": "integer",
+          "description": "Schema version of the save payload."
+        },
+        "highScore": {
+          "type": "integer",
+          "description": "Highest single-run score achieved."
+        },
+        "bestDistance": {
+          "type": "integer",
+          "description": "Longest single-run distance in meters."
+        },
+        "coins": {
+          "type": "integer",
+          "description": "Current spendable coin balance."
+        },
+        "totalCoinsCollected": {
+          "type": "integer",
+          "description": "Lifetime coins collected."
+        },
+        "totalDistance": {
+          "type": "integer",
+          "description": "Lifetime distance covered in meters."
+        },
+        "totalJumps": {
+          "type": "integer",
+          "description": "Lifetime jumps performed."
+        },
+        "totalSlides": {
+          "type": "integer",
+          "description": "Lifetime slides performed."
+        },
+        "totalPowerUps": {
+          "type": "integer",
+          "description": "Lifetime power-ups collected."
+        },
+        "runsPlayed": {
+          "type": "integer",
+          "description": "Total completed runs."
+        },
+        "selectedCharacter": {
+          "type": "string",
+          "description": "Active explorer hero ID.",
+          "enum": ["aurelia", "cross", "kael", "solara"],
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "unlockedCharacters": {
+          "type": "array",
+          "description": "Unlocked explorer hero IDs (bounded <= 10)."
+        },
+        "selectedStartBiome": {
+          "type": "string",
+          "description": "Selected starting temple biome ID.",
+          "enum": [
+            "jungle_temple",
+            "suspended_bridges",
+            "underground_ruins",
+            "mountain_cliff",
+            "lava_temple",
+            "golden_kingdom"
+          ],
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "unlockedBiomes": {
+          "type": "array",
+          "description": "Unlocked biome IDs (bounded <= 10)."
+        },
+        "upgradeLevels": {
+          "type": "object",
+          "description": "Power-up upgrade levels (1-5) keyed by PowerUpType."
+        },
+        "completedMissions": {
+          "type": "array",
+          "description": "Completed career mission IDs (bounded <= 30)."
+        },
+        "unlockedAchievements": {
+          "type": "array",
+          "description": "Unlocked achievement IDs (bounded <= 30)."
+        },
+        "dailyMissions": {
+          "type": "object",
+          "description": "Current day's randomized 3 daily challenges and progress."
+        },
+        "settings": {
+          "type": "object",
+          "description": "Graphics quality and audio preferences."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the latest cloud save."
+        }
+      },
+      "required": [
+        "ownerId",
+        "version",
+        "highScore",
+        "bestDistance",
+        "coins",
+        "totalCoinsCollected",
+        "totalDistance",
+        "totalJumps",
+        "totalSlides",
+        "totalPowerUps",
+        "runsPlayed",
+        "selectedCharacter",
+        "unlockedCharacters",
+        "selectedStartBiome",
+        "unlockedBiomes",
+        "upgradeLevels",
+        "completedMissions",
+        "unlockedAchievements",
+        "dailyMissions",
+        "settings",
+        "updatedAt"
+      ]
+    },
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "Publicly visible non-PII high score entry in the Global Hall of Explorers.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the explorer.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Sanitized explorer display name shown on the leaderboard.",
+          "minLength": 1,
+          "maxLength": 48
+        },
+        "selectedCharacter": {
+          "type": "string",
+          "description": "Explorer hero ID used for the record.",
+          "enum": ["aurelia", "cross", "kael", "solara"],
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "highScore": {
+          "type": "integer",
+          "description": "Best single-run score (>= 0)."
+        },
+        "bestDistance": {
+          "type": "integer",
+          "description": "Best single-run distance in meters (>= 0)."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of record update."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "selectedCharacter",
+        "highScore",
+        "bestDistance",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/saves/{userId}": {
+      "schema": { "$ref": "#/entities/PlayerSave" },
+      "description": "Private owner-only cloud save document storing full game progression for a signed-in user."
+    },
+    "/leaderboard/{userId}": {
+      "schema": { "$ref": "#/entities/LeaderboardEntry" },
+      "description": "Non-PII Global Hall of Explorers leaderboard entries ordered by highScore."
+    }
+  }
+}
